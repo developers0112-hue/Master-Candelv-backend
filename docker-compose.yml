@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: market
+      POSTGRES_USER: market
+      POSTGRES_PASSWORD: market
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U market -d market"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    environment:
+      NODE_ENV: production
+      PORT: 6001
+      DATABASE_URL: postgresql://market:market@postgres:5432/market
+      REDIS_URL: redis://redis:6379
+      BINANCE_ENABLED: "true"
+      BINANCE_BASE_URL: https://api.binance.com
+      MAX_AGENT_CONCURRENCY: 10
+      AGENT_TIMEOUT_MS: 1500
+      AGENT_MAX_RETRIES: 1
+    command: ["sh", "-c", "node dist/src/migrate.js && node dist/src/server.js"]
+    ports:
+      - "6001:6001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:6001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    build: .
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://market:market@postgres:5432/market
+      REDIS_URL: redis://redis:6379
+      MAX_AGENT_CONCURRENCY: 10
+      AGENT_MAX_RETRIES: 1
+    command: ["node", "dist/src/worker.js"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:

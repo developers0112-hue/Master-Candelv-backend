@@ -1,0 +1,133 @@
+DATABASE REGRESSION REPORT
+Generated: 2026-09-21
+
+1. PREVIOUS WORKING DATABASE STATE
+- Repository configuration uses DATABASE_URL from .env.
+- The configured target is an external Neon PostgreSQL pooler, not local PostgreSQL.
+- Target metadata was verified without printing the password:
+  host=ep-small-pine-b5p4gk93-pooler.c-7.us-east-2.aws.neon.tech
+  port=5432
+  database=neondb
+  user=neondb_owner
+  sslmode=require
+- .env contains DATABASE_POOL_MIN=2, DATABASE_POOL_MAX=20, DATABASE_SSL=true, RUN_MIGRATIONS=true.
+- docker-compose.yml defines a separate local container target: market@postgres:5432/market. The application launched directly from the workspace does not use that Docker target.
+- Migration runner is src/database/migrator.ts and reads db/migrations in sorted order.
+
+2. CURRENT DATABASE STATE
+- Windows PostgreSQL service query returned no installed/running PostgreSQL service.
+- Docker and docker compose commands are not installed/resolvable in this terminal.
+- No local listener exists on TCP 5432.
+- The configured Neon hostname resolves to public AWS/Neon addresses.
+- The external database is currently reachable.
+
+3. EXACT ROOT CAUSE
+ROOT_CAUSE=TRANSIENT_EXTERNAL_DATABASE_AVAILABILITY_OR_STARTUP_FAILURE
+
+Evidence:
+- The previous audit observed DATABASE_UNAVAILABLE/HTTP 503, but did not capture a failed connection code or credential error.
+- Current .env still contains a valid-looking DATABASE_URL and was not changed during this investigation.
+- The exact application connection path using the same .env completed:
+  SELECT_1_OK [{ ok: 1 }]
+- Therefore the current configuration is not missing, malformed, or pointed at localhost.
+- Current PostgreSQL connectivity is recovered; the earlier 503 was not caused by a permanently stopped local PostgreSQL service.
+- The most defensible evidence-based conclusion is a transient Neon/network/database availability failure at the time of the previous smoke test, or a startup-time connection failure before retry/recovery. No repository evidence proves a credential rotation or .env change.
+
+4. WHAT CHANGED
+- No DATABASE_URL change was found in the current repository files.
+- .env timestamp: 2026-09-20 06:48:56.
+- docker-compose.yml timestamp: 2026-09-18 23:17:19.
+- The previous audit was run against a runtime where the database connection failed. The same runtime path now succeeds.
+- Migrations were not applied at the time of the previous audit; they were safely applied during this investigation through the existing runner.
+
+5. FILES/CONFIGS INVOLVED
+- .env
+- .env.example
+- docker-compose.yml
+- src/config.ts
+- src/database/client.ts
+- src/database/migrator.ts
+- src/database/repositories.ts
+- src/server.ts
+- db/migrations/001_initial.sql through 005_pattern_memory_calibration.sql
+
+6. POSTGRESQL SERVICE STATUS
+DATABASE_SERVICE=NOT_CONFIGURED
+- No Windows PostgreSQL service was returned by Get-Service *postgres*.
+- This is expected because the app targets external Neon, not local PostgreSQL.
+
+7. DOCKER STATUS
+- docker command unavailable in the current terminal.
+- docker compose status could not be queried.
+- docker-compose.yml is present but is not the active direct Node runtime target.
+
+8. PORT STATUS
+DATABASE_NETWORK=CONNECTED
+- localhost:5432: no local listener; Test-NetConnection failed.
+- External Neon DNS resolved successfully.
+- External PostgreSQL connection succeeded over configured SSL.
+- Redis localhost:6379 has no listener.
+
+9. DATABASE CONNECTION TEST
+DATABASE_AUTH=CONNECTED
+DATABASE_CONNECTION=CONNECTED
+- Same DATABASE_URL used by the application.
+- Node pg Client connection succeeded.
+- SELECT 1 succeeded.
+- No password or secret printed.
+
+10. MIGRATION STATUS
+DATABASE_SCHEMA=CONNECTED
+DATABASE_MIGRATIONS=CONNECTED
+Applied migrations:
+- 001_initial.sql
+- 002_behavior_intelligence.sql
+- 003_behavior_entities.sql
+- 004_historical_validation.sql
+- 005_pattern_memory_calibration.sql
+
+All required behavior, validation, pattern-memory, lifecycle, and calibration tables were verified present.
+
+11. FIX APPLIED
+- Ran the existing compiled migration runner:
+  node dist/src/migrate.js
+- It applied only unapplied migrations; no destructive migration was run.
+- Result:
+  appliedMigrations=[001_initial.sql,002_behavior_intelligence.sql,003_behavior_entities.sql,004_historical_validation.sql,005_pattern_memory_calibration.sql]
+- No application architecture change was required to repair PostgreSQL.
+
+12. RUNTIME PROOF
+- /health returned HTTP 200.
+- /api/v1/runtime returned HTTP 200.
+- /api/v1/pattern-validation returned HTTP 200 with { status: READY, items: [] }.
+- PostgreSQL-backed validation endpoint no longer returns DATABASE_UNAVAILABLE.
+- /ready returned HTTP 503, but the response identified separate dependencies:
+  database=true
+  redis=false
+  providerReady=false
+  provider=binance-spot
+- Redis is not listening on localhost:6379.
+- providerReady is false because the readiness implementation checks the disabled Binance provider, while Deriv is independently reporting CONNECTED/DATA_RECEIVING.
+
+13. TEST RESULTS
+- npm test -- --run --reporter=basic: PASS, 30 test files, 77 tests.
+- npm run typecheck: PASS.
+- npm run lint: PASS.
+- npm run build: PASS.
+
+FINAL STATUS
+DATABASE_SERVICE=NOT_CONFIGURED
+DATABASE_NETWORK=CONNECTED
+DATABASE_AUTH=CONNECTED
+DATABASE_CONNECTION=CONNECTED
+DATABASE_SCHEMA=CONNECTED
+DATABASE_MIGRATIONS=CONNECTED
+APPLICATION_DB_CONNECTION=CONNECTED
+HISTORICAL_VALIDATION_DB=CONNECTED
+ROOT_CAUSE=TRANSIENT_EXTERNAL_DATABASE_AVAILABILITY_OR_STARTUP_FAILURE
+FIX_STATUS=RECOVERED_AND_VERIFIED
+
+REMAINING INDEPENDENT READINESS BLOCKERS
+- Redis is not running locally, so /ready remains 503.
+- /ready checks disabled Binance rather than the active Deriv bridge; this is a readiness-contract issue, not a PostgreSQL failure.
+- PostgreSQL persistence is now available, but validation items remain empty because no historical validation dataset has been loaded.

@@ -1,0 +1,206 @@
+QUOTEX BROWSER OBSERVATION - ROOT CAUSE + LEGITIMATE DATA PATH AUDIT
+Generated: 2026-09-21
+
+SCOPE
+This is an audit only. No workaround, browser bypass, cookie extraction, session-token extraction, CAPTCHA bypass, private-protocol reverse engineering, Deriv change, Master Agent change, or signal-qualification change was made.
+
+FINAL STATUS
+QUOTEX_BROWSER_DATA=BLOCKED
+EXACT_ROOT_CAUSE=Manual browser login is only acknowledged as a user action; the application has no connected, documented, permitted Quotex market-data transport that supplies pair or price events. The registered Quotex adapter is an explicit unsupported adapter and reports NOT_VERIFIED/BLOCKED.
+SUPPORTED_DATA_PATH=No verified Quotex browser market-data path is currently available. The existing observation pipeline can accept a validated BrowserObservedEvent only when a legitimate upstream source supplies it; no such Quotex source is implemented or verified.
+
+1. WHAT HAPPENS AFTER MANUAL LOGIN
+
+The dashboard opens the official Quotex URL in a separate browser window. The frontend then calls:
+- POST /api/v1/observation/open
+- POST /api/v1/observation/start with userConfirmedLogin=true
+
+The backend start() method:
+- sets login=USER_CONFIRMED;
+- sets observation=OBSERVING;
+- creates an observation session ID;
+- sets marketData=NOT_AVAILABLE;
+- does not attach to the browser;
+- does not read browser DOM content;
+- does not subscribe to a browser event stream;
+- does not call a Quotex market-data API;
+- does not discover any pairs automatically;
+- does not produce any price or candle event.
+
+Therefore, after manual login, the application can know only that the user confirmed login. It cannot verify that the Quotex account is authenticated from the backend and it cannot observe Quotex market data.
+
+2. EXISTING BROWSER-OBSERVATION MECHANISM
+
+An existing BrowserObservationManager is present in src/market/browser-observation.ts. It is an observation-session state machine and analytical ingestion layer, not a browser transport or browser automation bridge.
+
+Existing supported operations:
+- openWorkspace(): records provider URL and requires user action.
+- start(): records manual login confirmation and starts an empty observation session.
+- discover(): accepts a caller-supplied list of pairs.
+- observe(): accepts a caller-supplied OHLC event and validates it.
+- runAnalysis(): forwards accepted candles to FeatureEngine, AgentOrchestrator, and BinarySignalEngine.
+
+No code connects BrowserObservationManager to:
+- Playwright, Puppeteer, Selenium, CDP, or an attached browser page;
+- browser DOM observation;
+- a browser extension/content script;
+- an official Quotex event callback;
+- a documented Quotex REST API;
+- a documented Quotex WebSocket API;
+- the registered QuotexProviderAdapter.
+
+The existing frontend file public/js/browser-observation.js only opens the official site and calls the session endpoints. It contains no DOM selector, page attachment, event listener, price parser, candle builder, or event forwarding implementation.
+
+3. QUOTEX PROVIDER ADAPTER EVIDENCE
+
+src/market/providers.ts registers Quotex independently with:
+- id=quotex
+- dataIdentity=quotex
+- category=QUOTEX
+- sourceType=BINARY_OPTIONS_SOURCE
+- adapter=QuotexProviderAdapter
+
+QuotexProviderAdapter extends UnsupportedProviderAdapter. Its inherited behavior is decisive:
+- configured=false;
+- historicalData=false;
+- realtimeCandles=false;
+- realtimeTicks=false;
+- supportedInstruments=[];
+- supportedTimeframes=[];
+- discoverInstruments() returns [];
+- fetchCandles() returns [];
+- getHistoricalCandles() returns [];
+- subscribeCandles() throws "Provider does not expose a permitted live candle interface";
+- subscribeTicks() throws "Provider does not expose a permitted live tick interface";
+- healthcheck() returns available=false, status=NOT_VERIFIED, state=BLOCKED.
+
+This is the exact backend reason for:
+QUOTEX_BROWSER_DATA=BLOCKED_NOT_VERIFIED
+
+The provider registry test explicitly verifies that Quotex remains unavailable and is not substituted with Binance data:
+- configured=false
+- available=false
+- status=NOT_VERIFIED
+- state=BLOCKED
+- dataIdentity=quotex
+- provider is not binance-spot
+
+4. IS THERE A DOCUMENTED/PUBLIC/PERMITTED QUOTEX MARKET-DATA INTERFACE?
+
+No verified interface is present in this repository or in the existing provider-interface review.
+
+docs/provider-interfaces.md records that the official site/FAQ inspection did not expose a verifiable public developer API or permitted market-data WebSocket contract. No adapter connection was implemented.
+
+The repository therefore does not have evidence of a permitted interface that could legitimately deliver Quotex pair, price, candle, timeframe, or timestamp data.
+
+The standalone quotex-scraper.js file does not establish a supported path. It is an incomplete placeholder:
+- it launches Puppeteer independently;
+- it uses a placeholder selector named .PRICE_CSS_CLASS;
+- it reads only a guessed text element if manually changed;
+- it does not discover pairs;
+- it does not construct candles;
+- it does not validate data;
+- it does not send events to /api/v1/observation/event;
+- it is not wired into the server or frontend;
+- it does not establish permission to access a private protocol or authenticated market-data stream.
+
+5. CAN THE APPLICATION LEGITIMATELY RECEIVE THE REQUIRED FIELDS?
+
+Field       Existing schema support       Legitimate Quotex source connected       Result
+pair/symbol BrowserObservedEvent.symbol   No                                  BLOCKED
+price       No standalone price event     No                                  BLOCKED
+candle      OHLC fields in BrowserObservedEvent  No                         BLOCKED
+ timeframe  BrowserObservedEvent.timeframe  No                                BLOCKED
+ timestamp  timestamp and closeTimestamp    No                                BLOCKED
+
+The application can technically validate an event if an upstream caller posts a complete BrowserObservedEvent after pair discovery. That is an ingestion contract, not evidence that the event came from Quotex. The current implementation cannot claim those fields as legitimately observed from a logged-in Quotex browser.
+
+6. WHERE THE EXISTING PIPELINE STOPS
+
+Requested conceptual path:
+Browser login
+  -> legitimate browser-visible market information
+  -> all observable pairs
+  -> all observable candles
+  -> Algorithm Detector
+  -> 500 logical agents
+  -> Master Agent
+
+Actual path:
+Manual login acknowledgement
+  -> empty BrowserObservationManager session
+  -> STOP: no Quotex pair source / no Quotex event source
+  -> InstrumentRegistry is never populated automatically
+  -> CandleStore receives no Quotex candle
+  -> FeatureEngine receives no Quotex candle
+  -> MarketBehaviorEngine receives no Quotex candle
+  -> AgentOrchestrator receives no legitimate Quotex observation
+  -> Master Agent receives no Quotex observation
+
+If a caller manually submits pairs and OHLC data to the observation endpoints, the downstream path is already connected:
+BrowserObservedEvent
+  -> InstrumentRegistry lookup
+  -> CandleStore.upsert()
+  -> DataQualityEngine.evaluate()
+  -> FeatureEngine.compute()
+  -> MarketBehaviorEngine.analyze()
+  -> AgentOrchestrator.analyze()
+  -> BinarySignalEngine.evaluate()
+  -> fail-closed NO_SIGNAL when gates are not met
+
+That synthetic/manual endpoint path must not be described as live Quotex browser observation.
+
+7. EXACT RUNTIME / TEST EVIDENCE
+
+Existing runtime readiness evidence:
+- /api/v1/runtime reported Quotex: NOT_VERIFIED / BLOCKED / available=false.
+- Existing readiness report recorded QUOTEX=NOT_VERIFIED_BLOCKED.
+- Existing browser audit recorded REAL_BROWSER_DATA=NOT_CONFIGURED_FOR_QUOTEX.
+- Existing browser audit recorded Deriv as the only connected live market source.
+
+Existing code-level runtime evidence:
+- Quotex healthcheck returns available=false, status=NOT_VERIFIED, state=BLOCKED.
+- Quotex discoverInstruments() returns an empty array.
+- Quotex subscribeCandles() and subscribeTicks() throw because no permitted live interface is exposed.
+- BrowserObservationManager.start() sets marketData=NOT_AVAILABLE after login confirmation.
+- BrowserObservationManager.discover() requires a caller-supplied pairs array.
+- BrowserObservationManager.observe() requires a caller-supplied complete OHLC event.
+- frontend browser-observation.js has no browser-data capture or event forwarding code.
+
+Existing tests verify the stop condition:
+- provider-registry.test.ts asserts Quotex is NOT_VERIFIED and BLOCKED.
+- quotex-ui-state.test.ts asserts user login without a permitted API remains blocked/unverified.
+- browser-observation.test.ts uses explicitly submitted test pairs and test candles; it does not prove a Quotex browser source.
+
+8. DOWNSTREAM PIPELINE STATUS
+
+Browser Observation state machine=IMPLEMENTED
+Pair Tracker / InstrumentRegistry=IMPLEMENTED FOR SUBMITTED OBSERVATIONS ONLY
+Candle Tracker / CandleStore=IMPLEMENTED FOR SUBMITTED OBSERVATIONS ONLY
+Validator / DataQualityEngine=IMPLEMENTED
+Feature Engine=CONNECTED TO ACCEPTED OBSERVATION EVENTS
+Behavior Engine=CONNECTED TO ACCEPTED OBSERVATION EVENTS
+Algorithm detection=AVAILABLE AFTER A VALID EVENT, NOT FED BY QUOTEX
+Logical agent routing=AVAILABLE AFTER A VALID EVENT; current runtime registry is 500 registered / 500 active specialized rule agents; execution remains bounded by configured concurrency
+Master Agent=CONNECTED FAIL-CLOSED
+Signal qualification=CONNECTED FAIL-CLOSED
+Quotex live input=BLOCKED_NOT_VERIFIED
+
+9. SECURITY / PERMISSION DECISION
+
+Because no documented, public, or otherwise verified permitted Quotex market-data interface is available, the following actions remain intentionally unimplemented:
+- bypassing HTTP 403 or other access controls;
+- extracting cookies;
+- extracting session tokens;
+- bypassing CAPTCHA;
+- reverse-engineering private WebSocket or browser protocols;
+- using unauthorized APIs;
+- fabricating pairs, prices, candles, timestamps, or signal evidence.
+
+10. CONCLUSION
+
+QUOTEX_BROWSER_DATA=BLOCKED
+
+EXACT_ROOT_CAUSE=The system has a manual-login acknowledgement and a generic observation-event validation pipeline, but no legitimate Quotex browser capture or permitted Quotex market-data adapter. The Quotex provider is intentionally implemented as NOT_VERIFIED/BLOCKED with no instruments, candles, timeframes, ticks, or health availability.
+
+SUPPORTED_DATA_PATH=No verified Quotex path exists in the current implementation. The downstream Browser Observation -> Pair Tracker -> Candle Tracker -> Validator -> Feature Engine -> Behavior Engine -> Agent Orchestrator -> Master Agent path is ready only for a legitimate, externally supplied observation event. Until a documented/permitted Quotex data interface is verified and connected, Quotex must remain BLOCKED and no Quotex data may be claimed.

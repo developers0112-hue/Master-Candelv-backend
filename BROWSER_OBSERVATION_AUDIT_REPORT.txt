@@ -1,0 +1,190 @@
+BROWSER OBSERVATION AUDIT REPORT
+Generated: 2026-09-21
+
+1. FILES INSPECTED
+- src/market/browser-observation.ts
+- src/market/behavior-engine.ts
+- src/market/instrument-registry.ts
+- src/market/candle-store.ts
+- src/market/live-provider-bridge.ts
+- src/market/live-tick-pipeline.ts
+- src/feature-engine.ts
+- src/market/data-quality.ts
+- src/agents/registry.ts
+- src/agents/orchestrator.ts
+- src/agents/catalog.ts
+- src/signal-engine.ts
+- src/market/historical-validation.ts
+- src/probability-engine.ts
+- src/server.ts
+- tests/browser-observation.test.ts
+- tests/live-tick-pipeline.test.ts
+- tests/behavior-engine.test.ts
+- tests/orchestrator.test.ts
+- tests/adaptive-horizon.test.ts
+
+2. EXISTING FUNCTIONALITY FOUND
+- Browser observation manager exists and is connected to the existing app architecture.
+- Pair discovery is implemented using InstrumentRegistry and browser-visible instrument metadata.
+- Candle tracking is implemented via CandleStore with per-instrument and per-timeframe history.
+- Candle validation is present and rejects invalid OHLC, duplicate future timestamps, impossible ranges, and stale/invalid data before analysis.
+- Feature generation is wired through FeatureEngine.
+- Market behavior detection is routed through the existing MarketBehaviorEngine and BehaviorEngine detectors.
+- Pattern memory is present inside BehaviorEngine through PatternMemory and matcher context.
+- Agent orchestration and Master Agent remain separate but connected to the existing signal logic.
+- SQL/PostgreSQL behavior and pattern validation tables are present and verified.
+- Deriv live pipeline remains the active real market source.
+
+3. FILES CHANGED
+- No rewrite of the PostgreSQL, historical validation, calibration, or signal stack was required.
+- The architecture was extended by preserving the existing single behavior-analysis pipeline rather than creating a parallel detector stack.
+
+4. NEW FUNCTIONALITY
+- Browser-observed events are validated before reaching the analytical pipeline.
+- Pair discovery is specific to the session and only for observed pairs.
+- Candle validation is fail-closed when invalid or future-unsafe inputs appear.
+- Browser-observed candles are pushed through FeatureEngine and BehaviorEngine within the existing market behavior path.
+- Master Agent remains fail-closed and returns NO_SIGNAL without sufficient evidence.
+
+5. BROWSER OBSERVATION ARCHITECTURE
+- BrowserObservationManager handles a session with explicit user confirmation.
+- openWorkspace/start/stop/closeBrowser manage lifecycle.
+- discover() tracks only submitted, observed instruments.
+- observe() validates timestamp, OHLC, ordering, and freshness before creating an accepted candle.
+- Observed candles feed directly into the behavior analysis path.
+
+6. PAIR TRACKING ARCHITECTURE
+- InstrumentRegistry stores distinct instruments by provider + providerSymbol.
+- The observation session can track multiple observed pairs independently.
+- Each pair remains logically isolated by symbol and provider context.
+- Pair state: discovered → observing → active → stale/unavailable is represented by runtime status and availability metadata.
+
+7. CANDLE TRACKING ARCHITECTURE
+- CandleStore stores per-instrument, per-timeframe sequences.
+- Candle lifecycle is tracked by state (EXPECTED/OPEN/UPDATED/CLOSED/VALIDATED/INVALID/CORRECTED).
+- Observed candles are not silently overwritten; the store preserves history and uses unique candle creation semantics.
+- Multi-timeframe isolation is enforced via symbol/timeframe grouping.
+
+8. FEATURE ENGINE CONNECTION
+- Browser-observed candles pass through FeatureEngine.
+- featureVersion is tied to the observed candle sequence and timestamp.
+- Future-candle leakage is rejected by validation and safe timestamp filtering.
+
+9. MARKET BEHAVIOR / ALGORITHM DETECTION CONNECTION
+- Existing BehaviorEngine is the single analysis layer.
+- Browser-observed candles are analyzed using MarketBehaviorEngine.analyze(...) and existing detectors.
+- This includes pattern detection, sequence detection, temporal behavior, volatility/regime, movement, and pattern evolution detectors.
+- No separate browser-specific detector stack was created.
+
+10. PATTERN MEMORY CONNECTION
+- Existing PatternMemory inside MarketBehaviorEngine stores evidence and uses same memory lifecycle.
+- Browser-observed behavior is recorded through the same memory path used by market data analysis.
+- Reliability, candidate, validated, and lifecycle state are preserved through the existing pattern memory contract.
+
+11. HISTORICAL VALIDATION CONNECTION
+- Browser-observed behavior evidence does not bypass existing historical validation.
+- Historical validation remains required before promotion and no fake validation is generated.
+- Current runtime evidence shows validation remains insufficient, so the system stays fail-closed.
+
+12. AGENT ROUTING
+- Existing AgentRegistry and AgentOrchestrator are used.
+- Browser observation calls the orchestrator with the same structured AnalysisRequest contract used elsewhere.
+- Relevant logical agents are selected, not OS processes.
+
+13. ACTUAL LOGICAL AGENT COUNT
+- Runtime truth observed from /api/v1/runtime: registered=7, implemented=4, active=4, underReview=3.
+- This is the actual truth and matches the existing architecture.
+
+14. MASTER AGENT CONNECTION
+- Master Agent remains the final fail-closed gate.
+- Browser-based evidence does not force CALL/PUT without passing existing agreement, validation, calibration, risk, and uncertainty gates.
+- Observed runtime evidence produces NO_SIGNAL under insufficient evidence conditions.
+
+15. DATABASE CHANGES
+- No duplicate browser tables were created.
+- Existing PostgreSQL schema remains the source of truth.
+- Migrations 001-005 are present and verified.
+- Browser observation uses the same persistence architecture already in place.
+
+16. FRONTEND CHANGES
+- Existing frontend/browser panels remain aligned with real backend state.
+- The app shows runtime-ready state and not fake values.
+- Browser observation is displayed through backend-backed state.
+
+17. RUNTIME EVIDENCE
+- /health returned 200.
+- /ready returned 200 after the readiness fix.
+- /api/v1/runtime returned 200 with Deriv connected and Data Receiving.
+- /api/v1/pattern-validation returned 200 READY.
+- Browser observation logs showed real runtime flow:
+  [BROWSER]
+  [USER]
+  [OBSERVATION]
+  [PAIR-DISCOVERY]
+  [MARKET]
+  [CANDLE]
+  [FEATURE]
+  [AGENTS]
+  [MASTER]
+- Live proof showed the actual final decision was NO_SIGNAL due to insufficient evidence.
+
+18. TEST RESULTS
+- npm test -- --run --reporter=basic: PASS (30 files, 77 tests)
+- npm run typecheck: PASS
+- npm run lint: PASS
+- npm run build: PASS
+
+19. REMAINING BLOCKERS
+- No real browser-available marketing data source is configured for Quotex or broker observation.
+- Quotex browser observation remains BLOCKED / NOT_VERIFIED.
+- Real historical validation dataset is still not configured in the current environment.
+- Therefore, validated patterns remain unavailable and the master agent remains fail-closed.
+
+20. SECURITY BOUNDARY
+- No password, session token, cookie, or broker authentication secret is accessed or extracted.
+- Browser observation remains observation-only and does not bypass any access control.
+- Broker execution remains disabled.
+
+21. TRUTH TABLE
+BROWSER_OBSERVATION=IMPLEMENTED
+PAIR_TRACKING=IMPLEMENTED
+MULTI_PAIR_TRACKING=IMPLEMENTED
+CANDLE_TRACKING=IMPLEMENTED
+MULTI_TIMEFRAME_TRACKING=IMPLEMENTED
+CANDLE_VALIDATION=IMPLEMENTED
+FEATURE_ENGINE_CONNECTION=IMPLEMENTED
+BEHAVIOR_ENGINE_CONNECTION=IMPLEMENTED
+PATTERN_MEMORY_CONNECTION=IMPLEMENTED
+HISTORICAL_VALIDATION_CONNECTION=PARTIAL
+OOS_VALIDATION=PARTIAL
+WALK_FORWARD=PARTIAL
+CALIBRATION=PARTIAL
+AGENT_ROUTING=IMPLEMENTED
+500_AGENT_ARCHITECTURE=PARTIAL_LOGICAL_RUNTIME
+MASTER_AGENT=IMPLEMENTED_FAIL_CLOSED
+SIGNAL_QUALIFICATION=IMPLEMENTED_FAIL_CLOSED
+POSTGRESQL=CONNECTED
+DERIV=CONNECTED_DATA_RECEIVING
+QUOTEX=BLOCKED_NOT_VERIFIED
+BROKER_EXECUTION=DISABLED
+
+FINAL TRUTH TABLE
+REAL_BROWSER_DATA=NOT_CONFIGURED_FOR_QUOTEX
+REAL_CANDLE_DATA=DERIV_LIVE_CANDLES
+MULTI_PAIR=IMPLEMENTED_IN_SESSION
+MULTI_TIMEFRAME=IMPLEMENTED_IN_SESSION
+FEATURE_PIPELINE=IMPLEMENTED
+BEHAVIOR_ENGINE=IMPLEMENTED
+PATTERN_MEMORY=IMPLEMENTED
+HISTORICAL_VALIDATION=PARTIAL_NO_REAL_DATASET
+OOS_VALIDATION=PARTIAL
+WALK_FORWARD=PARTIAL
+CALIBRATION=PARTIAL
+AGENT_COUNT=7_REGISTERED_4_ACTIVE
+AGENT_ROUTING=IMPLEMENTED
+MASTER_AGENT=IMPLEMENTED_FAIL_CLOSED
+SIGNAL_QUALIFICATION=IMPLEMENTED_FAIL_CLOSED
+POSTGRESQL=CONNECTED
+DERIV=CONNECTED_DATA_RECEIVING
+QUOTEX=BLOCKED_NOT_VERIFIED
+BROKER_EXECUTION=DISABLED

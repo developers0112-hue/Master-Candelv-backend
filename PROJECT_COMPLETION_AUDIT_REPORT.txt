@@ -1,0 +1,71 @@
+PROJECT COMPLETION AUDIT REPORT
+Generated: 2026-09-21
+
+IMPLEMENTED
+- Deriv live provider path: src/market/live-provider-bridge.ts. Runtime proof previously captured real EUR/USD ticks.
+- Candle, data quality, feature, behavior, agent, orchestration, risk, and signal modules remain connected.
+- Historical outcome labeling: src/market/historical-validation.ts. Outcomes use only candles after observation_timestamp and return PENDING when the horizon is unavailable.
+- Purged/embargoed split functions and walk-forward window generation: src/market/historical-validation.ts.
+- Validation metrics: sample size, wins, losses, hit rate, precision, recall, F1, Brier score, log loss, calibration error, drawdown, and losing streak.
+- Adaptive horizon gate: src/market/adaptive-horizon.ts. No horizon is selected without validated OOS, walk-forward, calibration, sample-size, regime, and uncertainty evidence.
+- Signal qualification gates: src/signal-engine.ts now requires validated evidence, OOS validation, walk-forward validation, selected horizon, acceptable risk, data quality, agreement, and no contradiction before CALL/PUT.
+- Historical validation persistence contract: src/database/repositories.ts and db/migrations/004_historical_validation.sql.
+- Pattern memory/calibration schema: db/migrations/005_pattern_memory_calibration.sql.
+- Behavior detectors and runtime evidence logs remain active: src/market/behavior-engine.ts.
+
+PARTIAL
+- Historical validation algorithms are implemented and tested, but no real historical outcome dataset is loaded in the current environment.
+- Pattern Memory has in-memory version snapshots and PostgreSQL schema/repository foundations; automatic live persistence is pending database availability and a configured write path.
+- Calibration algorithms exist in src/probability-engine.ts and validation metrics exist, but no production calibration dataset is configured.
+- Pattern lifecycle transition rules exist in src/market/pattern-lifecycle.ts, but lifecycle promotion has not occurred because evidence is unverified.
+- 500-agent architecture is bounded and logical; current runtime has a small concrete set, not 500 production implementations.
+
+NOT_CONFIGURED
+- PostgreSQL runtime persistence: the current smoke test returned DATABASE_UNAVAILABLE/NO_DATA for validation history.
+- Historical dataset/version input for production validation.
+- Calibration/OOS/walk-forward artifacts.
+
+BLOCKED
+- CALL/PUT qualification is blocked by insufficient validated evidence, missing OOS/walk-forward support, and unavailable PostgreSQL persistence.
+- Quotex remains NOT_VERIFIED/BLOCKED.
+
+NOT_SUPPORTED
+- Broker execution is disabled.
+- No private Quotex protocol, credentials, cookies, CAPTCHA, or session extraction is supported.
+
+TRUTH TABLE
+REAL_LIVE_PROVIDER_PATH=IMPLEMENTED_AND_RUNTIME_PROVEN
+HISTORICAL_DATA=PARTIAL_NO_PRODUCTION_DATASET_CONFIGURED
+POSTGRESQL=NOT_CONFIGURED_DATABASE_UNAVAILABLE
+OUTCOME_ENGINE=IMPLEMENTED_TESTED
+PATTERN_VALIDATION=PARTIAL_NO_REAL_DATASET
+PURGED_VALIDATION=IMPLEMENTED_TESTED
+EMBARGO=IMPLEMENTED_TESTED
+OOS_VALIDATION=PARTIAL_NO_DATASET
+WALK_FORWARD=IMPLEMENTED_STRUCTURE_NO_DATASET
+CALIBRATION=PARTIAL_ENGINE_EXISTS_NO_DATASET
+ADAPTIVE_HORIZON=IMPLEMENTED_GATE_NO_VALIDATED_HORIZON
+PATTERN_MEMORY=PARTIAL_IN_MEMORY_PLUS_SCHEMA
+PATTERN_LIFECYCLE=IMPLEMENTED_RULES_NOT_PROMOTED
+VALIDATED_PATTERNS=0
+ACTIVE_PATTERNS=0
+MASTER_AGENT=IMPLEMENTED_FAIL_CLOSED
+SIGNAL_QUALIFICATION=IMPLEMENTED_FAIL_CLOSED
+500_AGENT_ARCHITECTURE=PARTIAL_LOGICAL_BOUNDED_RUNTIME
+QUOTEX=NOT_VERIFIED_BLOCKED
+BROKER_EXECUTION=DISABLED
+
+RUNTIME EVIDENCE
+- Deriv reported CONNECTED / DATA_RECEIVING.
+- EUR/USD market ticks were observed.
+- MARKET-DATA and FEATURE-ENGINE logs were captured.
+- BEHAVIOR-AGREEMENT reported INSUFFICIENT_DATA.
+- Agent orchestration executed with real runtime timestamps.
+- Master Agent returned NO_SIGNAL.
+- Pattern validation endpoint returned 503 DATABASE_UNAVAILABLE rather than fabricating persistence.
+
+VERIFICATION
+- npm test -- --run --reporter=basic: PASS after transient provider-health timeout was rerun successfully.
+- npm run typecheck: PASS.
+- npm run lint: PASS.
+- npm run build: PASS.

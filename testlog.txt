@@ -1,0 +1,101 @@
+
+> binary-market-intelligence@0.1.0 test
+> vitest run --run --reporter=verbose
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mC:/Users/HP/Desktop/Market[39m
+
+node.exe : [90mstderr[2m | tests/collection.test.ts
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([90mstderr[2m...lection.test.ts 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[22m[39mΓùç injected env (76) from .env
+
+[90mstderr[2m | tests/live-tick-pipeline.test.ts
+[22m[39mΓùç injected env (76) from .env
+
+[90mstderr[2m | tests/market-observation.test.ts
+[22m[39mΓùç injected env (76) from .env
+
+ [32mΓ£ô[39m tests/collection.test.ts[2m > [22mprovider data collection[2m > [22mnormalizes identity, retries REST backfill, and rejects future/invalid candles
+ [32mΓ£ô[39m tests/collection.test.ts[2m > [22mprovider data collection[2m > [22mrejects out-of-order live events and preserves duplicate idempotency
+ [32mΓ£ô[39m tests/market-observation.test.ts[2m > [22mcontinuous market observation[2m > [22mdiscovers all provider instruments without hard-coded pair assumptions
+ [32mΓ£ô[39m tests/market-observation.test.ts[2m > [22mcontinuous market observation[2m > [22mversions corrected candles instead of silently replacing history
+ [32mΓ£ô[39m tests/market-observation.test.ts[2m > [22mcontinuous market observation[2m > [22mdoes not create versions for duplicate candle events
+ [32mΓ£ô[39m tests/market-observation.test.ts[2m > [22mcontinuous market observation[2m > [22mreplays only closed/validated candles and exposes prior history only
+ [32mΓ£ô[39m tests/market-observation.test.ts[2m > [22mcontinuous market observation[2m > [22mstores auditable market events
+ [32mΓ£ô[39m tests/market-observation.test.ts[2m > [22mcontinuous market observation[2m > [22mconnects discovery and validated candle close to downstream analysis
+ [32mΓ£ô[39m tests/live-tick-pipeline.test.ts[2m > [22mlive tick and 500-agent pipeline[2m > [22mkeeps the safe state when no validated model is ready
+ [32mΓ£ô[39m tests/live-tick-pipeline.test.ts[2m > [22mlive tick and 500-agent pipeline[2m > [22mfans out through 500 registered agents without spawning 500 processes
+ [32mΓ£ô[39m tests/signal-engine.test.ts[2m > [22mBinarySignalEngine[2m > [22memits a complete analytical CALL with payout-aware break-even math
+ [32mΓ£ô[39m tests/signal-engine.test.ts[2m > [22mBinarySignalEngine[2m > [22mfails closed for poor data, unknown regime, failed calibration, and restricted risk
+ [32mΓ£ô[39m tests/signal-engine.test.ts[2m > [22mBinarySignalEngine[2m > [22mdoes not turn a weak edge into a directional signal
+ [32mΓ£ô[39m tests/orchestrator.test.ts[2m > [22mAgentOrchestrator[2m > [22mroutes only relevant agents and produces a validated direction
+ [32mΓ£ô[39m tests/orchestrator.test.ts[2m > [22mAgentOrchestrator[2m > [22misolates failed agents and refuses insufficient evidence
+ [32mΓ£ô[39m tests/orchestrator.test.ts[2m > [22mAgentOrchestrator[2m > [22mfails closed on poor data quality and contradictory evidence
+ [32mΓ£ô[39m tests/provider-source-classification.test.ts[2m > [22mprovider source classification[2m > [22misolates provider identities even when the symbol appears similar
+ [32mΓ£ô[39m tests/provider-source-classification.test.ts[2m > [22mprovider source classification[2m > [22mkeeps binary and reference providers separated by source type
+ [32mΓ£ô[39m tests/provider-source-classification.test.ts[2m > [22mprovider source classification[2m > [22munsupported binary providers cannot emit live candles and must remain inactive
+ [32mΓ£ô[39m tests/provider-live.test.ts[2m > [22mlive Binance provider adapter[2m > [22mdiscovers trading instruments from exchange metadata
+ [32mΓ£ô[39m tests/provider-live.test.ts[2m > [22mlive Binance provider adapter[2m > [22mnormalizes only actually closed klines
+ [32mΓ£ô[39m tests/provider-live.test.ts[2m > [22mlive Binance provider adapter[2m > [22mreports provider failures without fabricating health
+[90mstderr[2m | tests/provider-intelligence.test.ts
+[22m[39mΓùç injected env (76) from .env
+
+[90mstderr[2m | tests/live-pipeline.test.ts
+[22m[39mΓùç injected env (76) from .env
+
+ [32mΓ£ô[39m tests/provider-intelligence.test.ts[2m > [22mbinary market data intelligence[2m > [22mkeeps provider mappings separate even when labels match
+ [32mΓ£ô[39m tests/provider-intelligence.test.ts[2m > [22mbinary market data intelligence[2m > [22mdoes not allow unsupported providers to emit data or claim timeframes
+ [32mΓ£ô[39m tests/live-pipeline.test.ts[2m > [22mlive observation pipeline[2m > [22mconnects discovery, closed candles, quality, and feature processing
+ [32mΓ£ô[39m tests/provider-registry.test.ts[2m > [22mmulti-provider registry[2m > [22mkeeps Binance as a real optional adapter and preserves provider identities
+ [32mΓ£ô[39m tests/provider-registry.test.ts[2m > [22mmulti-provider registry[2m > [22mnever reports unsupported providers as connected or substitutes Binance data
+ [32mΓ£ô[39m tests/oanda-provider.test.ts[2m > [22mOANDA official reference provider[2m > [22mstays NOT_CONFIGURED without account credentials
+ [32mΓ£ô[39m tests/oanda-provider.test.ts[2m > [22mOANDA official reference provider[2m > [22mnormalizes official candle responses as reference-market data
+ [32mΓ£ô[39m tests/provider-intelligence.test.ts[2m > [22mbinary market data intelligence[2m > [22mexposes fixed provider classes with source separation[33m 1439[2mms[22m[39m
+ [32mΓ£ô[39m tests/provider-intelligence.test.ts[2m > [22mbinary market data intelligence[2m > [22mcarries source lineage into the analytical signal
+ [32mΓ£ô[39m tests/provider-priority.test.ts[2m > [22mProviderPriorityManager[2m > [22mprefers Deriv when it is healthy
+ [32mΓ£ô[39m tests/provider-priority.test.ts[2m > [22mProviderPriorityManager[2m > [22mfalls back to Finnhub when Deriv is unavailable
+ [32mΓ£ô[39m tests/provider-priority.test.ts[2m > [22mProviderPriorityManager[2m > [22mbroadcasts live ticks to all subscribed agent workers
+ [32mΓ£ô[39m tests/probability-model.test.ts[2m > [22mprobability and model validation[2m > [22mcalculates payout-aware break-even and calibrated bin probability
+ [32mΓ£ô[39m tests/probability-model.test.ts[2m > [22mprobability and model validation[2m > [22mcalculates proper scoring and calibration metrics
+ [32mΓ£ô[39m tests/probability-model.test.ts[2m > [22mprobability and model validation[2m > [22mprevents degraded or unvalidated models from activation
+[90mstderr[2m | tests/analysis-quality.test.ts
+[22m[39mΓùç injected env (76) from .env
+
+ [32mΓ£ô[39m tests/analysis-quality.test.ts[2m > [22mdata quality and feature pipeline[2m > [22mdetects duplicate, gap, and invalid OHLC conditions
+ [32mΓ£ô[39m tests/analysis-quality.test.ts[2m > [22mdata quality and feature pipeline[2m > [22mnever uses candles after the requested observation timestamp
+ [32mΓ£ô[39m tests/validation-monte-carlo.test.ts[2m > [22mhistorical validation and Monte Carlo[2m > [22mruns ordered historical backtests and walk-forward windows
+ [32mΓ£ô[39m tests/validation-monte-carlo.test.ts[2m > [22mhistorical validation and Monte Carlo[2m > [22mprevents a shuffled input sequence from being treated as ordered evidence
+ [32mΓ£ô[39m tests/validation-monte-carlo.test.ts[2m > [22mhistorical validation and Monte Carlo[2m > [22mreturns reproducible simulation percentiles
+ [32mΓ£ô[39m tests/security-provider.test.ts[2m > [22msecurity and provider boundaries[2m > [22mhashes passwords and enforces role permissions[33m 711[2mms[22m[39m
+ [32mΓ£ô[39m tests/security-provider.test.ts[2m > [22msecurity and provider boundaries[2m > [22mrate-limits and does not treat unconfigured providers as live
+ [32mΓ£ô[39m tests/database.test.ts[2m > [22mdatabase runtime boundaries[2m > [22mdoes not silently create an in-memory production database
+ [32mΓ£ô[39m tests/database.test.ts[2m > [22mdatabase runtime boundaries[2m > [22mruns unapplied migrations transactionally through an injected executor
+ [32mΓ£ô[39m tests/jobs.test.ts[2m > [22mbackground jobs[2m > [22mdeduplicates jobs and dead-letters after bounded retries
+ [32mΓ£ô[39m tests/signal-state.test.ts[2m > [22mlive signal state machine[2m > [22mpreserves explicit lifecycle states and expires signals
+ [32mΓ£ô[39m tests/signal-state.test.ts[2m > [22mlive signal state machine[2m > [22mrejects a signal already past its expiration
+ [32mΓ£ô[39m tests/api-contract.test.ts[2m > [22mAPI-facing registry contract[2m > [22mexposes registered agent metadata without exposing secrets
+ [32mΓ£ô[39m tests/api-contract.test.ts[2m > [22mAPI-facing registry contract[2m > [22mallows under-review agents to participate in live routing when relevant
+ [32mΓ£ô[39m tests/quotex-ui-state.test.ts[2m > [22mQuotex UI state handling[2m > [22mnormalizes unsupported or unverified provider states without fabricating live data
+ [32mΓ£ô[39m tests/quotex-ui-state.test.ts[2m > [22mQuotex UI state handling[2m > [22mkeeps Quotex workflow manual and blocked unless a permitted market-data interface is verified
+ [32mΓ£ô[39m tests/live-market-connection.test.ts[2m > [22mlive market connection[2m > [22muses the local relay websocket URL
+ [32mΓ£ô[39m tests/live-market-connection.test.ts[2m > [22mlive market connection[2m > [22maccepts valid market payloads and rejects invalid ones
+ [32mΓ£ô[39m tests/risk-simulation.test.ts[2m > [22mrisk and paper simulation[2m > [22mcalculates drawdown and losing streak without claiming risk elimination
+ [32mΓ£ô[39m tests/risk-simulation.test.ts[2m > [22mrisk and paper simulation[2m > [22mruns deterministic binary outcomes as simulation-only events
+ [32mΓ£ô[39m tests/config.test.ts[2m > [22mconfiguration[2m > [22mloads bounded development defaults
+ [32mΓ£ô[39m tests/config.test.ts[2m > [22mconfiguration[2m > [22mloads Finnhub WebSocket settings from environment
+ [32mΓ£ô[39m tests/config.test.ts[2m > [22mconfiguration[2m > [22mrequires a database URL in production
+ [32mΓ£ô[39m tests/config.test.ts[2m > [22mconfiguration[2m > [22mrejects unsafe agent concurrency
+ [32mΓ£ô[39m tests/monitoring.test.ts[2m > [22mdrift and stress monitoring[2m > [22mdetects severe distribution drift and unknown small samples
+ [32mΓ£ô[39m tests/monitoring.test.ts[2m > [22mdrift and stress monitoring[2m > [22mfails provider and extreme volatility stress scenarios
+
+[2m Test Files [22m [1m[32m25 passed[39m[22m[90m (25)[39m
+[2m      Tests [22m [1m[32m63 passed[39m[22m[90m (63)[39m
+[2m   Start at [22m 20:38:45
+[2m   Duration [22m 19.90s[2m (transform 2.07s, setup 0ms, collect 10.13s, tests 3.26s, environment 20ms, prepare 13.62s)[22m
+

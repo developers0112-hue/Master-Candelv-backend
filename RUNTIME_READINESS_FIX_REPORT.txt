@@ -1,0 +1,165 @@
+RUNTIME READINESS FIX REPORT
+Generated: 2026-09-21
+
+SCOPE
+Only Redis readiness handling and provider readiness selection were changed. PostgreSQL implementation, historical validation, Master Agent, signal qualification, and broker execution were not rebuilt.
+
+1. REDIS AUDIT
+
+Configuration:
+- REDIS_URL=redis://localhost:6379 from .env.
+- RedisJobStore is created when REDIS_URL exists.
+- Redis is used by the optional RedisJobStore/queue path.
+- AppConfig.redisRequired is true only for NODE_ENV=production.
+- Current NODE_ENV=development, therefore Redis is configured but not a required readiness dependency.
+- docker-compose.yml defines Redis 7 on redis:6379 for the containerized production topology.
+- The direct Windows workspace runtime does not have Docker or a local Redis service.
+
+Diagnostics:
+- No Windows Redis service found.
+- docker command unavailable in the environment.
+- No process listening on localhost:6379.
+- Test-NetConnection localhost -Port 6379 failed.
+- redis-cli is not installed/resolvable.
+
+REDIS_STATUS=UNAVAILABLE
+REDIS_CONNECTION=DISCONNECTED_OPTIONAL_IN_DEVELOPMENT
+
+2. PROVIDER READINESS AUDIT
+
+Previous incorrect behavior:
+- /ready used the hardcoded Binance adapter.
+- BINANCE_ENABLED=false, so providerReady=false and provider=binance-spot.
+- This did not represent the active configured market provider.
+
+Fix:
+- /ready now evaluates the active Deriv LiveProviderBridge when configured.
+- It uses actual providerHealth().available and providerHealth().state.
+- It does not enable Binance to make readiness pass.
+- If Deriv disconnects or stops receiving data, providerReady becomes false.
+
+PROVIDER_CONFIGURED=DERIV
+PROVIDER_READINESS=CONNECTED_DATA_RECEIVING
+DERIV_STATUS=CONNECTED
+
+3. READINESS LOGIC
+
+Development:
+- database is required.
+- Redis is optional because config.redisRequired=false.
+- active configured provider must be genuinely ready.
+
+Production:
+- database is required.
+- Redis is required because config.redisRequired=true.
+- active configured provider must be genuinely ready.
+
+4. END-TO-END RUNTIME PROOF
+
+Fresh application process was started from the compiled build with the existing .env.
+
+/health
+HTTP 200
+{"status":"ok","registrySize":7}
+
+/ready
+HTTP 200
+{
+  "status":"ready",
+  "database":true,
+  "redis":false,
+  "redisRequired":false,
+  "providerReady":true,
+  "provider":"deriv",
+  "providerState":"DATA_RECEIVING",
+  "reason":null
+}
+
+/api/v1/runtime
+HTTP 200
+- Deriv: CONNECTED / DATA_RECEIVING / available=true
+- Quotex: NOT_VERIFIED / BLOCKED / available=false
+- Agents: registered=7, implemented=4, active=4, underReview=3
+- Master Agent: NO_SIGNAL
+- Broker execution: disabled
+
+/api/v1/pattern-validation
+HTTP 200
+{"status":"READY","items":[]}
+
+5. LIVE PIPELINE PROOF
+
+Real runtime logs captured:
+[DERIV] connected and subscribed
+DERIV tick: EUR/USD
+[MARKET-DATA] provider=DERIV symbol=EUR/USD
+[FEATURE-ENGINE] provider=DERIV symbol=EUR/USD
+[BEHAVIOR-AGREEMENT] validation=INSUFFICIENT_DATA
+[AGENT-REGISTRY] relevantAgents=4
+[AGENT-ORCHESTRATOR] agents started/completed
+[MASTER-AGENT] decision=NO_SIGNAL
+
+The system did not fabricate a signal. Evidence remained insufficient and the Master Agent returned NO_SIGNAL.
+
+6. EXACT REASON /ready WAS 503 BEFORE
+
+There were two independent readiness defects:
+
+A. Redis:
+- Redis was unavailable on localhost:6379.
+- The readiness function always required redis even in development, despite AppConfig.redisRequired being false outside production.
+
+B. Provider mismatch:
+- The readiness function checked providerRegistry.get("binance").adapter.healthcheck().
+- Binance was disabled.
+- The active real provider was Deriv through LiveProviderBridge.
+- Therefore providerReady was false even while Deriv was receiving data.
+
+7. FIX APPLIED
+
+[src/server.ts]
+- Redis is required by /ready only when config.redisRequired=true.
+- Active provider readiness uses Deriv LiveProviderBridge when configured.
+- Response now exposes redisRequired, provider, and providerState.
+- No Redis success is fabricated.
+- Binance was not enabled.
+
+8. POSTGRESQL STATUS
+
+PostgreSQL was not modified by this readiness fix.
+Previously verified state remains:
+- DATABASE_CONNECTION=CONNECTED
+- DATABASE_MIGRATIONS=001-005
+- PATTERN_VALIDATION_API=200_READY
+
+POSTGRESQL_STATUS=CONNECTED
+
+9. REGRESSION RESULTS
+
+npm test -- --run --reporter=basic
+- PASS
+- 30 test files
+- 77 tests
+
+npm run typecheck
+- PASS
+
+npm run lint
+- PASS
+
+npm run build
+- PASS
+
+FINAL STATUS
+REDIS_STATUS=UNAVAILABLE
+REDIS_CONNECTION=DISCONNECTED_OPTIONAL_IN_DEVELOPMENT
+PROVIDER_CONFIGURED=DERIV
+PROVIDER_READINESS=CONNECTED_DATA_RECEIVING
+DERIV_STATUS=CONNECTED
+POSTGRESQL_STATUS=CONNECTED
+HEALTH_STATUS=HTTP_200
+READY_STATUS=HTTP_200
+RUNTIME_STATUS=HTTP_200
+PATTERN_VALIDATION_STATUS=HTTP_200_READY
+BROKER_EXECUTION=DISABLED
+QUOTEX=NOT_VERIFIED_BLOCKED

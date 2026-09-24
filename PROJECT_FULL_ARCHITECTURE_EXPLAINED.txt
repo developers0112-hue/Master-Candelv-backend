@@ -1,0 +1,1207 @@
+BINARY MARKET INTELLIGENCE
+FULL PROJECT ARCHITECTURE AND CODE EXPLANATION
+============================================================
+
+Document purpose
+----------------
+This document explains the repository as a complete system: structure, runtime
+processes, data flow, modules, agents, the effective master-agent behavior,
+providers, storage, APIs, frontends, browser observation, tests, deployment,
+and known gaps. It is based on a source-level review of the project files.
+
+The project contains two related but mostly separate runtime families:
+
+1. Primary TypeScript market-intelligence platform
+   - HTTP API and dashboard
+   - logical analytical-agent registry
+   - market-data providers and live pipelines
+   - validation, probability, risk, and simulation engines
+   - PostgreSQL persistence
+   - Redis job infrastructure
+
+2. Secondary Python/local relay and browser-observation system
+   - local WebSocket relay
+   - Deriv/Finnhub forwarders
+   - SQLite persistence
+   - standalone frontend dashboard
+   - browser extension and screen-observation tools
+
+The two families share the repository but do not share one complete persistence
+or deployment path. The TypeScript service is the main documented backend.
+
+IMPORTANT PRODUCT BOUNDARY
+---------------------------
+This is an analytical and simulation system. It is not a live-trading bot.
+Signals are marked ANALYTICAL_SIGNAL and executionOrder is false. Binary-option
+providers are blocked, unverified, or unsupported unless a permitted data
+interface is explicitly verified. The system is intentionally fail-closed and
+can return NO_SIGNAL instead of inventing a decision.
+
+============================================================
+1. EXECUTIVE SYSTEM VIEW
+============================================================
+
+High-level request pipeline
+---------------------------
+
+HTTP POST /api/v1/analysis
+  -> parse and validate request JSON
+  -> build AnalysisRequest
+  -> select relevant ACTIVE/DEGRADED agents
+  -> execute selected agents through bounded worker pool
+  -> apply per-agent timeout and retry policy
+  -> isolate failed agents
+  -> aggregate evidence and probabilities
+  -> calculate agreement and data-quality conditions
+  -> apply BinarySignalEngine validation/risk/calibration gates
+  -> produce CALL, PUT, or NO_SIGNAL
+  -> optionally persist analytical signal in PostgreSQL
+  -> return JSON response with audit metadata
+
+Live market pipeline
+--------------------
+
+Provider REST/WebSocket/tick source
+  -> normalize provider identity and source class
+  -> validate OHLC/tick quality and timestamps
+  -> store in CandleStore or TickBuffer
+  -> construct closed candles when required
+  -> compute features
+  -> analyze market behavior and regime
+  -> create AnalysisRequest
+  -> route to relevant logical agents
+  -> aggregate evidence
+  -> apply validation, calibration, risk, and edge gates
+  -> update live signal state
+  -> publish dashboard/diagnostic information
+
+500-agent design
+---------------
+The registry stores agent definitions and executable adapters, not 500 OS
+processes. A request selects only matching agents. The orchestrator executes
+them with bounded concurrency, normally MAX_AGENT_CONCURRENCY=10. Therefore,
+creating 500 logical agents increases routing and execution work, but does not
+start 500 processes for each request.
+
+Effective decision chain
+------------------------
+There is no standalone class named MasterAgent. The master decision behavior is
+distributed across:
+
+- AgentRegistry: knows which agents exist and what they support.
+- AgentOrchestrator: selects, schedules, retries, and aggregates agents.
+- BinarySignalEngine: applies final directional-signal gates.
+- LiveProviderBridge: connects live ticks to analysis and exposes master state.
+- LiveSignalStateMachine: manages live signal lifecycle and expiry.
+
+The dashboard calls this combined behavior the master agent.
+
+============================================================
+2. REPOSITORY STRUCTURE
+============================================================
+
+Top-level files
+---------------
+
+package.json
+  Node/TypeScript package manifest. Defines build, test, typecheck, lint,
+  migration, worker, and start scripts. Runtime dependencies include pg,
+  redis, ws, dotenv. There is no working dev script even though README text
+  refers to npm run dev.
+
+README.md
+  High-level purpose, commands, agent-registry explanation, fail-closed
+  behavior, and analytical-only product boundary.
+
+index.js
+  Top-level JavaScript entry/support file. It is separate from the primary
+  TypeScript server entrypoint and should not be confused with src/server.ts.
+
+Dockerfile
+  Multi-stage Node 22 image. Builds TypeScript, then copies dist, db, and
+  public into a production runtime image. It does not copy backend, frontend,
+  tools, or documentation.
+
+docker-compose.yml
+  Defines PostgreSQL 16, Redis 7, API on port 6001, and worker services.
+  The API runs migrations before starting the server.
+
+eslint.config.js
+  ESLint configuration for the TypeScript project.
+
+tsconfig.json
+  Strict TypeScript configuration. ES2022 target, NodeNext modules,
+  noUncheckedIndexedAccess, exactOptionalPropertyTypes, and rootDir '.'.
+
+start_all.ps1
+  Local Python-oriented startup helper. Creates/uses .venv, installs Python
+  requirements, starts the Python relay and data forwarder, and opens the
+  standalone frontend. It does not start the TypeScript API.
+
+Legacy/top-level JavaScript files
+---------------------------------
+backup-provider-test.js, deriv-test.js, quotex-scraper.js, test-db.js,
+test-quotex.js, and related logs/reports are legacy, diagnostic, or audit
+artifacts. They are not the main TypeScript request path. Read them as
+historical/supporting material rather than as the current central architecture.
+
+src/
+----
+The primary TypeScript application. It contains API startup, configuration,
+agent orchestration, analysis engines, live market processing, jobs, database
+access, and provider adapters.
+
+src/agents/
+  Agent interfaces, registry, capability catalog, specialized agent factory,
+  and orchestrator.
+
+src/market/
+  Provider abstractions, provider adapters, live bridges, candle/tick
+  processing, observation, behavior, validation, and market state utilities.
+
+src/database/
+  PostgreSQL pool/client, repositories, and production repository boundaries.
+
+src/jobs/
+  Redis queue and worker job infrastructure.
+
+db/migrations/
+----------------
+001_initial.sql
+  Core instruments, candles, market events, agent performance, signals,
+  audit logs, simulations, backtests, drift/stress reports, users/sessions,
+  features, models, predictions, calibration, walk-forward, and Monte Carlo.
+
+002_behavior_intelligence.sql
+  Behavior patterns, evidence, and detector correlations.
+
+003_behavior_entities.sql
+  Sequences, price-level reactions, temporal behaviors, regime transitions,
+  movement behaviors, candidates, validation runs, outcomes, and context
+  matches.
+
+004_historical_validation.sql
+  Historical behavior-validation result records.
+
+005_pattern_memory_calibration.sql
+  Validation runs, calibration results, pattern performance, lifecycle, and
+  pattern memory history.
+
+database/
+---------
+Python SQLite manager package. The Python side stores market_data.db and
+queues writes for candles_history and agent_signals.
+
+backend/
+--------
+Python local server, database wrapper, anomaly/diagnostic helpers, WebSocket
+streamers and provider forwarders. This is a separate local-relay path.
+
+frontend/
+---------
+Standalone static dashboard opened by start_all.ps1. It is not copied into
+the Docker image.
+
+public/
+-------
+Static content served by the TypeScript API. dashboard-v2.html is the main
+served dashboard; dashboard.html is an older dashboard.
+
+tools/
+------
+market-qx-observer: visible-DOM browser extension for sending user-observed
+OHLC events to the observation API.
+
+ws-debugger: localhost WebSocket/debug/screen-capture utilities. Screen data
+is explicitly unverified and is not a trusted market-data source.
+
+tests/
+-------
+Vitest tests for orchestration, providers, live pipelines, validation,
+security, database boundaries, jobs, browser observation, and signals.
+
+docs/
+------
+Architecture, project layout, provider contracts, audit reports, and Quotex
+runtime verification documents. Historical audit numbers can differ from the
+current source; current source is the authority for implementation claims.
+
+============================================================
+3. PRIMARY TYPESCRIPT STARTUP AND PROCESS MODEL
+============================================================
+
+src/server.ts
+-------------
+This is the primary API composition root. It loads configuration and wires:
+
+- 500-agent registry
+- AgentOrchestrator
+- BinarySignalEngine
+- optional PostgreSQL client/repositories
+- ProviderRegistry
+- BrowserObservationManager
+- optional Redis job store
+- live provider bridge and dashboard WebSocket relay
+- HTTP route handling
+
+It exposes health, readiness, runtime, agent, provider, observation, analysis,
+signal-history, behavior, and static-dashboard endpoints.
+
+The server starts listening unless NODE_ENV=test. Default development port is
+3001; Docker Compose supplies 6001. The dashboard relay uses localhost port
+8080, which can conflict with the Python relay if both are started.
+
+src/config.ts
+-------------
+Reads environment variables and produces typed runtime configuration. It
+covers database, Redis, HTTP port, agent concurrency, timeout/retry policy,
+Binance, Finnhub, OANDA, Deriv, Deriv-related fields, binary-option
+flags, relay settings, and feature/runtime switches.
+
+There are both older twelveData fields and marketTwelveData/marketDeriv field
+families. The main server path primarily uses the older twelveData names.
+
+src/migrate.ts
+-------------
+Migration entrypoint. Requires DATABASE_URL, reads SQL files from db/migrations,
+sorts them, creates/uses schema_migrations, executes each migration inside a
+transaction, and records applied migrations.
+
+src/worker.ts
+-------------
+Redis worker entrypoint. Requires REDIS_URL, claims jobs, and recognizes:
+market-observation, backtest, monte-carlo, and stress-test. The current
+handlers are placeholders and return immediately for supported types. Queue
+infrastructure exists, but business processing is incomplete.
+
+============================================================
+4. AGENT SYSTEM
+============================================================
+
+Agent data model
+----------------
+An agent definition contains:
+
+- id
+- role/type
+- version
+- lifecycle status
+- capabilities
+- supported timeframes
+- supported regimes
+- reliability
+- executable function
+
+Only ACTIVE and DEGRADED agents are eligible for routing. Agent execution
+returns structured evidence including output direction, probability,
+validation status, confidence metadata, provenance versions, latency, and
+error state.
+
+src/agents/registry.ts
+----------------------
+Owns registration and lookup. It stores executable metadata and functions,
+not operating-system workers. It supports capability/timeframe/regime-based
+relevance filtering and lifecycle states.
+
+src/agents/types.ts
+-------------------
+Defines AnalysisRequest, AgentDefinition, AgentEvidence, OrchestrationResult,
+agent status, directions, confidence metadata, audit records, and policy
+contracts. These types are the contract between request handling, agents,
+and final signal evaluation.
+
+src/agents/catalog.ts
+---------------------
+Defines a broad capability inventory, including:
+
+- ingestion and data quality
+- feature extraction
+- model families
+- analysis strategies
+- validation
+- risk
+- verification
+- coordination/meta functions
+
+createCapabilityAgent() creates UNDER_REVIEW placeholder agents. They return
+NO_SIGNAL and UNVERIFIED rather than pretending to have a validated model.
+
+src/agents/specialized.ts
+-------------------------
+Creates exactly 500 logical specialized agent definitions.
+
+Four explicit agents include:
+- trend-structure
+- return-momentum
+- candle-structure
+- data-quality-gate
+
+The remaining generated profiles cover trend, momentum, candle patterns,
+volatility, range, regime, wick structure, multi-feature analysis, and
+behavior. These are deterministic feature-rule adapters, not trained models.
+Their evidence is UNVERIFIED, calibration is unknown, sample size is normally
+zero, and uncertainty is high unless a real validated adapter replaces them.
+
+Typical specialized-agent behavior:
+- inspect featureValues and request regime
+- emit CALL, PUT, or NO_SIGNAL
+- explain the rule in evidence text
+- mark unavailable features INVALID
+- never claim out-of-sample validation without real evidence
+
+src/agents/orchestrator.ts
+--------------------------
+This is the effective master coordinator for a single analysis request.
+
+Responsibilities:
+1. Filter agents by lifecycle status, capability, timeframe, and regime.
+2. Enforce minimum-agent and selection policy.
+3. Run selected agents through a bounded asynchronous pool.
+4. Apply per-agent timeout.
+5. Retry according to max retry policy.
+6. Isolate failures so one agent does not crash the request.
+7. Keep selected IDs, failures, attempt counts, and timestamps in audit data.
+8. Aggregate direction votes and weighted probabilities.
+9. Calculate agreement and evidence quality.
+10. Return NO_SIGNAL when evidence is insufficient, conflicting, invalid, or
+    outside policy.
+
+Default policy values from the implementation/README are approximately:
+- max concurrency: 10
+- timeout: 1500 ms
+- max retries: 1
+- minimum agents: 3
+- minimum agreement: 0.90
+- minimum data quality: 85
+- minimum probability edge: 0.02
+
+The exact configured values can be overridden by environment/config.
+
+Master-agent interpretation
+---------------------------
+The master agent is an architectural role, not a single file. Its control
+loop is:
+
+input market observation
+  -> select applicable specialists
+  -> run specialists safely
+  -> aggregate their evidence
+  -> reject unreliable evidence
+  -> send aggregate result to final signal engine
+  -> expose decision and reason to runtime/dashboard
+
+This design avoids a monolithic model and makes every specialist auditable.
+It also means that a displayed master decision is only as strong as the
+provider quality, evidence quality, validation state, and final gates.
+
+============================================================
+5. FINAL SIGNAL AND FAIL-CLOSED LOGIC
+============================================================
+
+src/signal-engine.ts
+--------------------
+BinarySignalEngine is the final policy boundary. It does not blindly trust
+the orchestrator direction. It applies strict gates such as:
+
+- data quality >= 85
+- request validation status is VALIDATED
+- out-of-sample validation is true
+- walk-forward validation is true
+- a horizon is selected
+- no behavior contradiction
+- regime is not UNKNOWN or ABNORMAL
+- risk status is ACCEPTABLE
+- representative evidence is valid
+- representative sample size >= 100
+- uncertainty is not HIGH
+- calibration has not failed
+- weighted probability clears minimum probability edge over break-even
+
+For binary payout math, break-even probability is calculated from payout. For
+an 80 percent payout, the break-even probability is about 0.555555. A model
+probability below the configured edge requirement becomes NO_SIGNAL/WEAK_SIGNAL.
+
+Successful output is still:
+- signalType = ANALYTICAL_SIGNAL
+- executionOrder = false
+
+Failure states include data-quality warning, unknown regime, failed
+calibration, restricted/blocked risk, weak signal, insufficient evidence,
+contradiction, and other NO_SIGNAL reasons.
+
+src/live-state.ts
+-----------------
+LiveSignalStateMachine tracks NO_DATA, waiting/analyzing, CALL/PUT, and STALE
+states. It rejects already-expired signals and expires active signals when
+validity ends.
+
+src/probability-engine.ts
+-------------------------
+Provides probability calculations, calibration-related metrics, and
+break-even/edge logic used by the signal and validation layers.
+
+============================================================
+6. MARKET DATA AND PROVIDER ARCHITECTURE
+============================================================
+
+Provider contract
+-----------------
+src/market/provider.ts defines adapters for:
+
+- instrument discovery
+- supported timeframe discovery
+- current candles
+- historical candles
+- candle subscriptions
+- tick subscriptions
+- health checks
+- reconnect/disconnect
+
+Every event carries provider identity, provider symbol, source class, source
+timestamp, ingestion timestamp, quality status, and normalized market data.
+This prevents a binary-options symbol from being silently represented as a
+reference-market symbol.
+
+ProviderRegistry
+----------------
+src/market/providers.ts registers seven provider identities:
+
+1. Binance
+2. OANDA
+3. Finnhub
+4. Quotex
+5. Pocket Option
+6. AlimTrade
+7. Other binary-options providers
+
+Reference-market adapters
+-------------------------
+BinanceSpotProvider
+- official REST exchange metadata and kline adapter
+- official candle WebSocket support
+- reference-market source
+- no native tick subscription in this adapter
+- candles remain UNVERIFIED until quality/validation policy accepts them
+
+OandaProvider
+- requires account ID and API token
+- official REST candles
+- official pricing-stream ticks
+- can build candles from ticks because native candle streaming is not exposed
+- reference-market source
+
+FinnhubProvider
+- API-key-based REST candles
+- WebSocket trade events
+- tick-to-candle aggregation
+- reference-market source
+
+Binary-option adapters
+----------------------
+Quotex, Pocket Option, AlimTrade, and generic other-binary-options adapters
+are deliberately not data substitutes. They generally provide no supported
+instruments, candles, or ticks. Quotex reports NOT_VERIFIED/BLOCKED; the others
+normally report NOT_SUPPORTED. They do not secretly use Binance data.
+
+src/market/provider-priority.ts
+--------------------------------
+Chooses an available live source. Typical priority:
+
+1. Deriv
+2. Finnhub
+3. Binance
+4. OANDA
+
+It can broadcast live ticks to subscribed consumers and maintains provider
+identity when fallback occurs.
+
+============================================================
+7. LIVE MARKET PIPELINES
+============================================================
+
+src/market/live-provider-bridge.ts
+-----------------------------------
+Connects provider events to analysis. For a live tick it generally:
+
+1. normalizes provider data
+2. detects a basic regime
+3. updates/builds one-minute candles
+4. records latency/tick/provider diagnostics
+5. computes features
+6. runs behavior analysis
+7. applies algorithm/noise quality gates
+8. creates AnalysisRequest
+9. runs AgentOrchestrator
+10. runs BinarySignalEngine
+11. records master-agent decision and reason
+12. publishes dashboard relay frames
+
+Deriv bridge flow:
+Deriv WebSocket -> normalized price event -> provider-priority
+broadcast -> local one-minute CandleStore -> FeatureEngine -> behavior
+engine -> quality gate -> orchestrator -> signal engine -> diagnostics.
+
+src/market/live-pipeline.ts
+---------------------------
+LiveObservationPipeline connects provider discovery, InstrumentRegistry,
+candle polling/subscriptions, CandleStore, EventStream, DataQualityEngine,
+FeatureEngine, and live signal state. It is the candle-oriented pipeline.
+
+src/market/live-tick-pipeline.ts
+--------------------------------
+LiveTickPipeline is the tick-oriented path. It supports:
+
+- provider tick subscription
+- rolling TickBuffer
+- second-candle construction
+- candle quality checks
+- feature extraction
+- behavior analysis
+- orchestrator execution
+- risk evaluation
+- signal-state transitions
+
+It demonstrates how 500 logical agents can be fanned out without 500
+processes.
+
+src/market/collection.ts
+------------------------
+Handles REST backfill, live subscriptions, reconnect attempts, normalization,
+ordering, duplicates, and heartbeat monitoring.
+
+src/market/observer.ts
+----------------------
+Discovers provider instruments, polls candles, and pushes observations into
+the processing path.
+
+src/market/candle-store.ts
+--------------------------
+Maintains current candles, versions, corrections, lifecycle state, and basic
+candle validity. A corrected candle gets a new version rather than silently
+overwriting history.
+
+src/market/tick-buffer.ts
+-------------------------
+Stores ticks and buckets them into time windows/candles.
+
+src/market/data-quality.ts
+-------------------------
+Checks duplicate data, gaps, OHLC relationships, freshness, outliers,
+completeness, and quality scores. Low-quality data causes downstream
+NO_SIGNAL rather than a fabricated directional result.
+
+src/market/event-stream.ts
+--------------------------
+In-memory event/audit stream for market events and processing transitions.
+
+src/market/instrument-registry.ts
+---------------------------------
+Tracks discovered instruments, provider availability, symbols, timeframes,
+and source identity.
+
+src/market/instrument-mapping.ts
+--------------------------------
+Keeps provider symbol identity separate. For example, a Quotex EUR/USD and a
+Binance EURUSDT-like reference symbol remain different instrument identities
+even when their labels look similar.
+
+src/market/replay.ts
+--------------------
+Replays closed and validated candles into analysis/validation flows.
+
+src/market/performance-memory.ts
+--------------------------------
+Keeps in-memory performance structures for agent/instrument/timeframe/regime
+combinations.
+
+============================================================
+8. FEATURES, BEHAVIOR, VALIDATION, RISK, AND SIMULATION
+============================================================
+
+src/feature-engine.ts
+---------------------
+Computes latest return, rolling return, range, candle body, body ratio,
+upper/lower wick, short-window volatility, and momentum.
+
+src/market/behavior-engine.ts
+-----------------------------
+Detects and evaluates:
+
+- candle patterns
+- same-direction sequences
+- price-level reactions
+- time-window behaviors
+- volatility-regime transitions
+- movement behavior
+- pattern evolution
+
+It also maintains pattern memory/context matching, agreement and contradiction
+scores, uncertainty, validation state, horizon selection, and behavior gates.
+
+src/market/historical-validation.ts
+------------------------------------
+Supports future-candle outcome labels, pending outcomes, hit rate,
+precision/recall/F1, Brier score, log loss, calibration, drawdown, losing
+streak, purged/embargoed splits, walk-forward validation, and pattern
+validation lifecycle.
+
+src/market/adaptive-horizon.ts
+------------------------------
+Supports 1, 5, 10, 15, 30, and 60 minute horizons. A usable horizon needs
+at least 100 samples, out-of-sample performance, walk-forward stability,
+compatible regime, non-high uncertainty, and accepted calibration.
+
+src/validation-engine.ts
+------------------------
+Runs ordered historical backtests and walk-forward windows. It detects input
+ordering/leakage problems and keeps validation explicitly historical.
+
+src/monte-carlo-engine.ts
+-------------------------
+Runs seeded Monte Carlo simulations and returns reproducible ending-capital
+percentiles. Results are simulation-only.
+
+src/simulation-engine.ts
+------------------------
+Runs deterministic paper binary-options outcomes. It does not call a broker
+and labels outputs simulationOnly.
+
+src/risk-engine.ts
+------------------
+Evaluates capital usage, exposure, drawdown, losing streak, utilization, and
+risk status. Restricted or blocked risk prevents a directional signal.
+
+src/monitoring-engine.ts
+------------------------
+Provides distribution-drift and stress-test analysis.
+
+src/model-registry.ts
+---------------------
+Defines model registration/version and activation eligibility. A model must
+meet validation/calibration/metadata policy before activation. The current
+server does not wire a full model-registry instance into /api/v1/models; that
+endpoint reports unavailable/not available.
+
+============================================================
+9. DATABASE AND PERSISTENCE
+============================================================
+
+TypeScript PostgreSQL path
+--------------------------
+src/database/client.ts uses pg.Pool and DATABASE_URL. Production mode expects
+PostgreSQL. It supports transaction-oriented database boundaries.
+
+src/database/repositories.ts includes repositories for:
+- analytical signals
+- market events
+- behavior validation results
+
+src/database/production-repositories.ts defines broader boundaries for:
+- users
+- sessions
+- instruments
+- candles
+- features
+
+Main schema groups
+------------------
+The migrations create tables for:
+
+- instruments and provider availability
+- versioned candles and quality/lifecycle states
+- market event audit data
+- per-agent performance
+- analytical signals
+- audit logs
+- paper simulations and backtests
+- drift and stress reports
+- users and sessions
+- features
+- models/model versions/predictions
+- calibration and walk-forward runs
+- Monte Carlo runs
+- behavior patterns/evidence/sequences
+- price levels and temporal behaviors
+- regime transitions and movement behaviors
+- pattern candidates, outcomes, context matches
+- validation, calibration, lifecycle, performance, and pattern memory
+
+The schema is wider than the currently wired runtime. Many tables have a
+future-ready structure but do not yet have complete repository workflows.
+
+Python SQLite path
+------------------
+database/db_manager.py stores data in database/market_data.db, including:
+- candles_history
+- agent_signals
+
+Writes are queued through a background SQLite writer thread. backend/db_manager.py
+is a compatibility wrapper. There is no demonstrated synchronization between
+this SQLite store and TypeScript PostgreSQL.
+
+============================================================
+10. HTTP API SURFACE
+============================================================
+
+Health/static
+-------------
+GET /health
+GET /ready
+GET /dashboard
+GET /js/quotex-ui.js
+GET /js/browser-observation.js
+
+Runtime and registry
+--------------------
+GET /api/v1/runtime
+GET /api/v1/agents
+GET /api/v1/models
+
+Observation
+-----------
+GET /api/v1/observation
+POST /api/v1/observation/open
+POST /api/v1/observation/start
+POST /api/v1/observation/stop
+POST /api/v1/observation/close
+POST /api/v1/observation/pairs
+POST /api/v1/observation/event
+
+Browser observation requires explicit user confirmation before starting.
+
+Providers and instruments
+------------------------
+GET /api/v1/provider/health
+GET /api/v1/providers
+GET /api/v1/providers/:id
+GET /api/v1/providers/:id/health
+GET /api/v1/providers/:id/instruments
+GET /api/v1/providers/:id/timeframes
+GET /api/v1/instruments
+
+Behavior/validation
+-------------------
+GET /api/v1/market-behavior/:pair
+GET /api/v1/pattern-validation
+GET /api/v1/behavior-evidence
+GET /api/v1/patterns
+GET /api/v1/sequences
+GET /api/v1/price-levels
+GET /api/v1/regime-transitions
+GET /api/v1/behavior-matches
+
+Many behavior endpoints currently expose the in-memory browser-observation
+snapshot rather than querying every persisted behavior table.
+
+Analysis/history
+----------------
+POST /api/v1/analysis
+GET /api/v1/signals/history
+
+Authentication note
+-------------------
+src/auth.ts provides password hashing, sessions, roles, permissions, and rate
+limiting, but authentication middleware is not attached to server routes. The
+API currently does not show route-level authorization enforcement.
+
+HTTP safety headers
+-------------------
+The JSON response helper adds request IDs and headers including:
+- x-content-type-options: nosniff
+- x-frame-options: DENY
+- cache-control: no-store
+
+============================================================
+11. BROWSER OBSERVATION AND QUOTEX BOUNDARY
+============================================================
+
+src/market/browser-observation.ts
+----------------------------------
+Implements an observation state machine:
+
+open workspace
+  -> user confirms login
+  -> start observation
+  -> discover submitted pairs
+  -> accept submitted OHLC events
+  -> data-quality checks
+  -> features
+  -> behavior
+  -> orchestration
+  -> final signal gate
+
+The backend does not independently discover browser pairs. A caller must submit
+pairs and OHLC events.
+
+src/quotex-ui-state.ts
+----------------------
+Normalizes provider UI state. Manual website login does not prove that a
+permitted backend market-data interface exists. Quotex remains blocked unless
+such an interface is explicitly verified.
+
+tools/market-qx-observer
+------------------------
+The browser extension observes visible DOM fields only. It requires visible
+pair, timeframe, and complete OHLC values. It refuses to synthesize candles
+from price-only values, retries transport failures, and sends events to the
+observation API.
+
+It does not:
+- inspect private WebSocket frames
+- read cookies, credentials, or tokens
+- read canvas pixels
+- execute trades
+
+Configuration issue: its default target is localhost:4000, while the
+TypeScript server defaults to 3001 and Compose uses 6001. These values must be
+aligned explicitly.
+
+tools/ws-debugger and screen capture
+-------------------------------------
+Local-only WebSocket/debugging and screen-capture utilities. Screen outputs
+are UNVERIFIED_SCREEN_CAPTURE and are not trusted provider candles.
+
+============================================================
+12. FRONTENDS AND DASHBOARDS
+============================================================
+
+public/dashboard-v2.html
+------------------------
+Main dashboard served by the TypeScript API. It shows market watch, provider
+matrix, live candles, event stream, master-agent state, agent fleet, provider
+health, browser observation state, and pipeline stages.
+
+It polls health, instruments, providers, agents, runtime, and observation
+endpoints. It connects to ws://localhost:8080 for relay candle frames.
+
+public/dashboard.html
+---------------------
+Older static terminal-style dashboard with more legacy/synthetic presentation
+behavior.
+
+frontend/index.html
+------------------
+Standalone dashboard opened by start_all.ps1.
+
+frontend/js/app.js
+------------------
+Connects to the local relay, validates candle symbols/timestamps/OHLC/order,
+and updates chart, decision label, confidence, and telemetry.
+
+frontend/js/chart.js
+--------------------
+Canvas candlestick renderer. It includes sample-series generation code, but the
+live application begins with an empty live series.
+
+frontend/css/style.css
+----------------------
+Standalone frontend styling.
+
+Packaging boundary
+------------------
+Docker copies public but not frontend. Therefore the standalone frontend is
+not part of the container image.
+
+============================================================
+13. PYTHON/LOCAL RELAY SYSTEM
+============================================================
+
+backend/server.py
+-----------------
+Runs a WebSocket relay, normally on ws://localhost:8080. It separates browser
+clients from provider clients using User-Agent/context, accepts JSON frames,
+broadcasts candle-like payloads, persists candles/signals to SQLite, and
+exposes diagnostic WebSocket/HTTP-upgrade behavior.
+
+backend/forex_ws_streamer.py
+----------------------------
+Provider/WebSocket streaming helper for local forex flow.
+
+backend/deriv_forwarder.py
+---------------------------------
+Receives/normalizes Deriv events and forwards them to the local relay.
+
+backend/rolling_ohlc_listener.py
+--------------------------------
+Builds rolling OHLC observations from incoming live events.
+
+backend/screen_live_ws_client.py
+---------------------------------
+Consumes screen/live WebSocket observations for diagnostics; output is not
+trusted market data.
+
+backend/anomaly_engine.py
+-------------------------
+Local anomaly-detection/diagnostic helper.
+
+backend/diagnostic_consensus_demo.py
+------------------------------------
+Demonstration of diagnostic consensus behavior, not the main API path.
+
+backend/db_manager.py and database/db_manager.py
+-------------------------------------------------
+SQLite persistence boundary for the Python relay.
+
+start_all.ps1 sequence
+----------------------
+1. create or reuse Python virtual environment
+2. install backend/requirements.txt
+3. start Python relay
+4. start provider forwarder
+5. open frontend/index.html
+
+This sequence does not start src/server.ts and can conflict with the TypeScript
+service's dashboard relay on port 8080.
+
+============================================================
+14. REDIS JOB ARCHITECTURE
+============================================================
+
+src/jobs/queue.ts
+-----------------
+Redis job store uses ready sorted sets, dead-letter queue, idempotency keys,
+due-job claiming, bounded attempts, and exponential retry delays.
+
+Current limitation: complete() is effectively a no-op. Claimed jobs leave the
+ready set, but completed-job durability/recording is not implemented.
+
+src/worker.ts
+-------------
+The worker recognizes market-observation, backtest, monte-carlo, and
+stress-test job types, but the current handlers are placeholders. Redis is a
+foundation for asynchronous workloads, not a finished job-processing system.
+
+============================================================
+15. DEPLOYMENT
+============================================================
+
+Docker Compose topology
+-----------------------
+
+PostgreSQL 16
+  database: market
+  user: market
+  persistent volume: postgres-data
+
+Redis 7
+  AOF enabled
+  persistent volume: redis-data
+
+API
+  port 6001
+  runs migrations then src/server.js
+  waits for PostgreSQL and Redis health
+  default Compose agent concurrency: 10
+  timeout: 1500 ms
+  max retries: 1
+
+Worker
+  runs dist/src/worker.js
+  waits for Redis
+
+Docker build
+------------
+Build stage installs dependencies and compiles TypeScript. Runtime stage uses
+production dependencies and copies dist, db, and public. The container does not
+include Python, frontend, tools, or docs.
+
+Environment/runtime mismatches to verify
+-----------------------------------------
+- README mentions npm run dev, but package.json has no dev script.
+- TypeScript default port is 3001; Compose API is 6001.
+- browser extension default backend is 4000.
+- TypeScript dashboard relay and Python relay both commonly use 8080.
+- Compose enables Binance but does not configure Deriv.
+- Local frontend and TypeScript dashboard are different launch paths.
+
+============================================================
+16. TEST SUITE AND VERIFIED CONTRACTS
+============================================================
+
+The repository contains a broad Vitest suite, approximately 30 test files and
+roughly 143 test cases according to source inspection. The important contracts
+are:
+
+Agent/orchestration
+-------------------
+- relevance routing works
+- retries and timeout behavior are bounded
+- failed agents are isolated
+- disagreement prevents unsafe directional output
+- 500-agent fanout remains logical rather than process-based
+
+Live pipelines
+--------------
+- provider discovery works
+- candles normalize and order correctly
+- duplicate/gap/quality handling exists
+- ticks can become candles
+- no-data/model-not-ready states remain safe
+
+Provider boundaries
+-------------------
+- provider identity is preserved
+- Binance is an optional real adapter
+- unsupported binary providers cannot emit live candles
+- Quotex is NOT_VERIFIED/BLOCKED
+- reference and binary source classes cannot be silently merged
+- priority fallback prefers healthy Deriv then Finnhub, etc.
+
+Signal/risk/validation
+----------------------
+- payout-aware break-even math works
+- weak edges become NO_SIGNAL
+- poor data, unknown regime, failed calibration, and blocked risk fail closed
+- historical input ordering/leakage is detected
+- walk-forward windows execute
+- seeded Monte Carlo is reproducible
+- paper simulation is explicitly simulation-only
+- signal lifecycle expires stale signals
+
+Security/database/jobs
+----------------------
+- password hashing and constant-time verification are covered
+- role permissions and rate limiting are covered
+- migrations/database boundaries are covered
+- queue deduplication and dead-letter retry behavior are covered
+
+Browser observation
+-------------------
+- explicit confirmation is required
+- invalid/incomplete browser data is rejected
+- submitted pair restrictions are enforced
+- visible observation cannot claim backend provider access
+
+Test gaps
+---------
+There is no obvious end-to-end test for the complete Docker Compose topology,
+or for the full Python relay -> frontend path. Authentication unit behavior is
+covered, but route integration/authorization is not demonstrated. Redis worker
+business handlers also lack complete functional coverage because they are
+placeholders.
+
+============================================================
+17. IMPORTANT CURRENT GAPS AND RISKS
+============================================================
+
+1. Authentication is implemented but not wired to HTTP routes.
+2. Redis job completion persistence is incomplete.
+3. Worker job handlers are placeholders.
+4. Many database tables are schema-ready but not fully connected to runtime
+   repositories.
+5. /api/v1/models does not expose a fully wired model registry.
+6. Python SQLite and TypeScript PostgreSQL appear independent.
+7. Port defaults differ across API, Compose, extension, and relays.
+8. Both TypeScript and Python paths may try to own port 8080.
+9. Browser observation depends on caller-submitted events; it is not an
+   automatic authenticated provider feed.
+10. Binary-option provider adapters are intentionally blocked/unsupported.
+11. Generated specialized agents are deterministic feature rules and mostly
+    UNVERIFIED, not production-trained predictive models.
+12. Historical audit documents may describe older agent counts or runtime
+    states. Current source should be treated as authoritative.
+13. The live bridge can publish dashboard data without a complete demonstrated
+    PostgreSQL persistence flow for every live candle.
+14. The repository is analytical/simulation-only; no broker execution path is
+    present.
+
+============================================================
+18. END-TO-END EXPLANATION IN PLAIN LANGUAGE
+============================================================
+
+A market observation first enters through a provider adapter or an explicitly
+submitted browser observation. The system preserves the source identity and
+checks whether the data is complete, fresh, ordered, and mathematically valid.
+It then computes technical features and behavior context.
+
+The request is sent only to relevant logical agents. These agents are not
+separate running applications. They are registered executable definitions,
+limited by a worker pool so the system remains bounded even with 500 agents.
+Each response must include evidence, probability/confidence metadata, version
+information, and validation status.
+
+The orchestrator combines the responses but does not have unlimited authority.
+The final signal engine checks data quality, regime, validation, calibration,
+horizon, uncertainty, agreement, risk, and payout-aware probability edge. Any
+critical failure produces NO_SIGNAL. A successful result is an analytical
+research signal and cannot be treated as a trading order.
+
+The dashboard presents this state, while PostgreSQL is the primary structured
+store for the TypeScript platform. Redis is intended for asynchronous jobs.
+The Python relay is a separate local collection/display path using SQLite.
+
+============================================================
+19. RECOMMENDED OPERATING ORDER
+============================================================
+
+For the TypeScript platform:
+
+1. npm install
+2. start PostgreSQL and Redis, or use docker compose up --build
+3. npm run typecheck
+4. npm test
+5. npm run build
+6. npm run db:migrate when DATABASE_URL is available
+7. npm start, or run node dist/src/server.js
+8. check GET /health and GET /ready
+9. inspect /api/v1/runtime, /api/v1/providers, and /api/v1/agents
+10. submit only validated, permitted analysis observations
+
+For the Python/local relay:
+
+1. review backend/requirements.txt
+2. run start_all.ps1 in the intended local environment
+3. verify the relay port and provider-forwarder port
+4. open frontend/index.html
+5. confirm that data is labeled as verified/unverified correctly
+6. do not assume Python SQLite state is present in PostgreSQL
+
+============================================================
+20. FILE-TO-RESPONSIBILITY QUICK INDEX
+============================================================
+
+API/composition: src/server.ts
+Configuration: src/config.ts
+Migrations: src/migrate.ts, db/migrations/*.sql
+Worker: src/worker.ts
+Agent types: src/agents/types.ts
+Agent registry: src/agents/registry.ts
+Agent catalog: src/agents/catalog.ts
+500-agent factory: src/agents/specialized.ts
+Master coordinator: src/agents/orchestrator.ts
+Final signal gate: src/signal-engine.ts
+Signal lifecycle: src/live-state.ts
+Features: src/feature-engine.ts
+Behavior: src/market/behavior-engine.ts
+Validation: src/validation-engine.ts, src/market/historical-validation.ts
+Risk: src/risk-engine.ts
+Simulation: src/simulation-engine.ts
+Monte Carlo: src/monte-carlo-engine.ts
+Models: src/model-registry.ts
+Providers: src/market/provider.ts, src/market/providers.ts
+Provider priority: src/market/provider-priority.ts
+Live bridge: src/market/live-provider-bridge.ts
+Candle pipeline: src/market/live-pipeline.ts
+Tick pipeline: src/market/live-tick-pipeline.ts
+Candle state: src/market/candle-store.ts
+Tick state: src/market/tick-buffer.ts
+Quality: src/market/data-quality.ts
+Instrument discovery: src/market/instrument-registry.ts
+Symbol identity: src/market/instrument-mapping.ts
+Collection/reconnect: src/market/collection.ts
+Observation: src/market/browser-observation.ts
+Quotex state: src/quotex-ui-state.ts
+PostgreSQL client: src/database/client.ts
+Repositories: src/database/repositories.ts, src/database/production-repositories.ts
+Redis queue: src/jobs/queue.ts
+Auth/security: src/auth.ts
+Main dashboard: public/dashboard-v2.html
+Standalone dashboard: frontend/index.html
+Python relay: backend/server.py
+Python persistence: database/db_manager.py
+Browser extension: tools/market-qx-observer/
+WebSocket debugger: tools/ws-debugger/
+Tests: tests/*.test.ts
+
+END OF DOCUMENT
+============================================================

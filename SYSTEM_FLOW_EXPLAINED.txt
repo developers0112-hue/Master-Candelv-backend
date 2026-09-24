@@ -1,0 +1,985 @@
+BINARY MARKET INTELLIGENCE
+FULL SYSTEM FLOW EXPLAINED
+========================================
+
+Document purpose
+----------------
+This document explains how the current project works from startup to the final UI signal.
+It separates:
+
+1. What is actually connected and running.
+2. What is implemented but not connected to the live production path.
+3. What the dashboard displays.
+4. Why the current truthful result is usually NO_SIGNAL.
+5. What Quotex/Market-QX does and does not provide in this project.
+
+Important truth
+---------------
+The current live market path is primarily a Deriv/reference-market data path.
+It is not a verified live Quotex market-data path.
+Deriv data must not be relabeled as Quotex data.
+The UI can look Quotex-inspired, but the provider identity and backend truth remain separate.
+
+============================================================
+1. PROJECT STARTUP
+============================================================
+
+Main package scripts from package.json:
+
+- npm run build
+  Compiles TypeScript using tsconfig.json into dist/.
+
+- npm start
+  Runs dist/src/server.js.
+
+- npm run worker
+  Runs dist/src/worker.js.
+
+- npm test
+  Runs the Vitest test suite.
+
+- npm run typecheck
+  Runs TypeScript validation without emitting files.
+
+Main startup file:
+- src/server.ts
+
+Configuration file:
+- src/config.ts
+
+Environment:
+- .env
+
+Port behavior:
+- src/config.ts default HTTP port is 3001.
+- This project currently has PORT=4000 in .env, so the active local HTTP server uses port 4000.
+- The dashboard is therefore normally opened at:
+  http://localhost:4000/
+
+Local websocket relay:
+- Normally binds to 127.0.0.1:8080.
+- The frontend chart connects to ws://127.0.0.1:8080.
+
+At startup src/server.ts creates or prepares:
+
+- AgentRegistry
+- AgentOrchestrator
+- BinarySignalEngine
+- Database repositories when database configuration exists
+- ProviderRegistry
+- DashboardRelay
+- LiveProviderBridge
+- BrowserObservationManager
+
+The server then starts the relay, starts the Deriv bridge, starts the Deriv universe subscription, and starts the HTTP server.
+
+============================================================
+2. CONFIGURATION AND PROVIDER IDENTITY
+============================================================
+
+src/config.ts loads environment variables and applies defaults.
+
+Important configuration behavior:
+
+- Deriv is enabled by default unless disabled by environment variables.
+- Default Deriv websocket is:
+  wss://api.derivws.com/trading/v1/options/ws/public
+- Symbols include major forex pairs and synthetic indices.
+- Broker execution is disabled by default.
+- Deriv execution is disabled by default.
+- Production requires DATABASE_URL.
+- Production also treats Redis as required.
+
+Provider identity is explicit:
+
+- provider: deriv
+- category: DERIV_MARKET_DATA
+- source type: REFERENCE_MARKET_SOURCE
+- data identity: Deriv market data
+
+The backend does not treat this data as Quotex data.
+
+index.js is a separate small Deriv smoke-test client. It is not the main dashboard runtime.
+
+============================================================
+3. DERIV LIVE DATA INGESTION
+============================================================
+
+Main file:
+- src/market/live-provider-bridge.ts
+
+Main path:
+LiveProviderBridge.start()
+  -> connectPrimaryStream()
+  -> Deriv websocket
+  -> subscribe to symbols
+  -> normalize ticks
+  -> publish normalized ticks
+
+Typical subscription shape:
+
+{"ticks":"frxEURUSD","subscribe":1}
+
+For each incoming Deriv message the bridge reads:
+
+- symbol
+- quote, bid, or ask
+- epoch timestamp
+
+Symbol normalization examples:
+
+- frxEURUSD -> EUR/USD
+- frxGBPUSD -> GBP/USD
+
+The bridge updates diagnostics such as:
+
+- connection state
+- last provider message
+- last tick
+- latency
+- received symbols
+- reconnect count
+
+Provider health states may include:
+
+- NOT_CONFIGURED
+- CONNECTING
+- CONNECTED
+- DATA_RECEIVING
+- WAITING_FOR_DATA
+
+Reconnect behavior:
+
+- The bridge reconnects after connection failure.
+- Reconnect delay uses exponential backoff.
+- Maximum reconnect delay is approximately 30 seconds.
+
+============================================================
+4. IMPORTANT CURRENT LIVE-BRIDGE LIMITATION
+============================================================
+
+The current LiveProviderBridge.handleLiveTick() does the following:
+
+1. Sends the tick to DashboardRelay.publishTick().
+2. Updates agent diagnostics.
+3. Sets the master agent state to NO_SIGNAL.
+4. Sets decision to NO_SIGNAL.
+5. Uses a waiting reason such as WAITING_FOR_VALIDATED_DERIV_DATA.
+6. Clears the last consensus.
+
+The current live bridge does NOT call the complete analysis chain.
+
+It does not currently invoke all of these from the live tick handler:
+
+- FeatureEngine
+- AgentOrchestrator.analyze()
+- BinarySignalEngine.evaluate()
+- ValidationEngine
+- RiskEngine
+- LiveTickPipeline
+
+Therefore:
+
+- Deriv stream can feed the live chart.
+- Deriv stream can update provider diagnostics.
+- Deriv stream does not currently prove that a model-backed CALL or PUT signal was generated.
+- The truthful displayed master state is normally NO_SIGNAL.
+
+============================================================
+5. SECOND DERIV UNIVERSE SUBSCRIPTION
+============================================================
+
+File:
+- src/server.ts
+
+Function:
+- startDerivUniverse()
+
+This path:
+
+1. Gets the registered Deriv adapter.
+2. Discovers instruments.
+3. Subscribes to individual instrument ticks.
+4. Converts provider ticks into dashboard events.
+5. Calls dashboardRelay.publishTick(event).
+
+The running server can therefore have two Deriv-to-dashboard routes:
+
+1. LiveProviderBridge
+2. startDerivUniverse()
+
+Both can update chart relay data.
+Neither route currently creates a fully validated model-backed trading signal.
+
+============================================================
+6. DASHBOARD RELAY
+============================================================
+
+File:
+- src/market/dashboard-relay.ts
+
+Purpose:
+- Local websocket server for the browser dashboard.
+
+Normal binding:
+- 127.0.0.1:8080
+
+Responsibilities:
+
+- Accept browser websocket clients.
+- Send cached candle data when a browser connects.
+- Broadcast updated candles to connected browsers.
+- Maintain current in-memory candle state.
+
+The relay is not a full historical database.
+It mainly retains the current candle per provider and symbol in memory.
+
+When publishTick() receives a tick, it aggregates one-minute candles:
+
+- bucket = floor(timestamp / 60 seconds)
+- open = first tick in that minute
+- high = highest tick in that minute
+- low = lowest tick in that minute
+- close = latest tick in that minute
+- volume = null
+- provider = normally DERIV
+
+The relay is a chart broadcast layer, not the final signal engine.
+
+============================================================
+7. CANDLE STORE AND TICK BUFFER
+============================================================
+
+Files:
+
+- src/market/candle-store.ts
+- src/market/tick-buffer.ts
+
+CandleStore supports lifecycle states such as:
+
+- OPEN
+- UPDATED
+- CORRECTED
+- CLOSED
+- VALIDATED
+- INVALID
+
+It can maintain current candles and correction history.
+
+Tick buffer components include:
+
+- RollingTickBuffer
+- SecondCandleBuilder
+
+They support:
+
+- duplicate detection
+- timestamp ordering checks
+- time-bucket aggregation
+- second-based candle building
+- close-time OHLC generation
+
+The richer candle store and tick buffer are used by the analytical pipeline.
+They are different from the simple direct dashboard relay aggregation path.
+
+============================================================
+8. COMPLETE ANALYTICAL PIPELINE
+============================================================
+
+Main file:
+- src/market/live-tick-pipeline.ts
+
+This is the more complete intended analysis path.
+
+Conceptual flow:
+
+provider tick
+  -> normalize tick
+  -> RollingTickBuffer
+  -> candle aggregation
+  -> candle quality evaluation
+  -> behavior analysis
+  -> model readiness gate
+  -> feature calculation
+  -> agent orchestration
+  -> probability/vote analysis
+  -> simulated risk
+  -> signal decision
+  -> LiveTickSignal
+
+LiveTickPipeline can:
+
+1. Subscribe to provider ticks.
+2. Add ticks to the rolling buffer.
+3. Build candles.
+4. Evaluate candle quality.
+5. Detect market behavior.
+6. Block when the model is not ready.
+7. Compute candle and tick features.
+8. Invoke AgentOrchestrator.
+9. Evaluate simulated risk.
+10. Produce a LiveTickSignal.
+
+Current connection limitation:
+This pipeline is implemented, but it is not currently wired into the production startup path through LiveProviderBridge.
+
+============================================================
+9. DATA QUALITY
+============================================================
+
+File:
+- src/market/data-quality.ts
+
+Quality checks include:
+
+- missing OHLC fields
+- duplicate timestamps
+- timestamp ordering
+- invalid timestamps
+- malformed OHLC relationships
+- candle gaps
+- large outliers
+- freshness
+
+Default minimum quality is approximately 85.
+
+Typical quality meanings:
+
+- high enough quality -> eligible for later analysis
+- WARNING -> data exists but is not reliable enough
+- UNVERIFIED -> no trusted evidence yet
+- low quality -> signal must be blocked
+
+A live chart receiving prices does not automatically mean data is analytically validated.
+
+============================================================
+10. FEATURE ENGINE
+============================================================
+
+File:
+- src/feature-engine.ts
+
+Candle features include:
+
+- return
+- rolling return
+- range
+- candle body
+- body ratio
+- upper wick
+- lower wick
+- volatility
+- momentum
+
+Tick features include:
+
+- sample size
+- last price
+- tick delta
+- velocity
+- micro-trend
+- acceleration
+- volatility
+- tick frequency
+- consecutive direction
+
+Feature version:
+- features-1.0.0
+
+Features describe the market data.
+They do not by themselves create a valid CALL or PUT signal.
+
+============================================================
+11. BEHAVIOR AND PATTERN ANALYSIS
+============================================================
+
+File:
+- src/market/behavior-engine.ts
+
+Detectors include:
+
+- candle patterns
+- directional sequences
+- price-level reactions
+- temporal behavior
+- volatility regime transitions
+- movement persistence
+- pattern evolution
+
+The engine records:
+
+- agreement
+- disagreement
+- contradiction count
+- evidence strength
+- uncertainty
+- validation quality
+- selected horizon
+
+Initial evidence may be:
+
+- UNVERIFIED
+- INSUFFICIENT_DATA
+- insufficient strength
+- contradictory
+
+The behavior gate normally remains NO_SIGNAL until evidence is:
+
+- validated
+- sufficiently strong
+- non-contradictory
+- supported by a selected horizon
+
+============================================================
+12. AGENTS AND MODELS
+============================================================
+
+Files:
+
+- src/agents/types.ts
+- src/agents/catalog.ts
+- src/agents/specialized.ts
+- src/agents/registry.ts
+- src/agents/orchestrator.ts
+
+The system can register up to approximately 500 agent definitions.
+These are primarily rule-based feature evaluators, not trained live ML models.
+
+Specialized agent areas include:
+
+- trend structure
+- return momentum
+- candle structure
+- data quality
+- volatility and range
+- regime profile
+- wick analysis
+- multi-feature analysis
+- behavior analysis
+
+Evidence from these agents is normally marked UNVERIFIED until historical validation exists.
+
+The capability catalog also contains adapter categories for:
+
+- logistic regression
+- statistical models
+- tree models
+- neural models
+- validation
+- risk
+- meta-coordination
+
+Unconfigured model adapters normally return:
+
+- NO_SIGNAL
+- ADAPTER_NOT_CONFIGURED
+
+File:
+- src/model-registry.ts
+
+The current /api/v1/models endpoint reports that no model registry instance is configured.
+This means registered agents are not the same thing as trained and validated models.
+
+============================================================
+13. AGENT ORCHESTRATION
+============================================================
+
+Function:
+- AgentOrchestrator.analyze()
+
+Processing steps:
+
+1. Select eligible agents.
+2. Match timeframe and regime.
+3. Run agents with bounded concurrency.
+4. Apply timeout handling.
+5. Apply retry handling.
+6. Collect evidence.
+7. Calculate agreement.
+8. Calculate weighted probability.
+9. Calculate directional votes.
+10. Reject analysis when validation requirements fail.
+
+Important rejection conditions include:
+
+- data quality below 85
+- fewer than three agents produce evidence
+- more than half of agents fail
+- agreement below 0.9 in the stricter live configuration
+- probability edge below 0.02
+- failed calibration
+- missing required evidence
+
+500 registered agents does not mean 500 valid decisions.
+Only eligible, healthy, evidence-producing agents should influence analysis.
+
+============================================================
+14. SIGNAL ENGINE
+============================================================
+
+File:
+- src/signal-engine.ts
+
+Main class:
+- BinarySignalEngine
+
+The engine is analytical only.
+Execution order is false by design.
+
+Default/important gates include:
+
+- minimum data quality: 85
+- minimum agreement: approximately 0.7 in the general engine
+- minimum validation sample: 100
+- minimum probability edge: 0.02
+- payout assumption: 0.8
+- uncertainty cannot be high
+- validation must be complete
+- out-of-sample validation required
+- walk-forward validation required
+- horizon must be selected
+- regime cannot be UNKNOWN or ABNORMAL
+- risk must be ACCEPTABLE
+- representative evidence must be VALID
+- calibration cannot be FAILED
+
+The live bridge uses stricter requirements such as:
+
+- minimum agreement: 0.9
+- minimum win probability: 0.85
+
+Possible states include:
+
+- VALID_SIGNAL
+- WEAK_SIGNAL
+- HIGH_DISAGREEMENT
+- INSUFFICIENT_EVIDENCE
+- DATA_QUALITY_WARNING
+- UNKNOWN_REGIME
+- MODEL_DEGRADED
+- CALIBRATION_FAILED
+- NO_SIGNAL
+
+Current practical state:
+- NO_SIGNAL is expected when the live bridge has not connected the complete analysis chain.
+- NO_SIGNAL is also correct when evidence, model validation, risk, or calibration gates are incomplete.
+
+============================================================
+15. VALIDATION ENGINE
+============================================================
+
+File:
+- src/validation-engine.ts
+
+Utilities include:
+
+- chronological backtesting
+- accuracy calculation
+- Brier score
+- simulated drawdown
+- leakage detection
+- walk-forward window generation
+
+The validation engine provides computational tools.
+It does not automatically create a validated production model history.
+
+A model must have real historical and out-of-sample evidence before its output should qualify as a live signal.
+
+============================================================
+16. RISK ENGINE
+============================================================
+
+File:
+- src/risk-engine.ts
+
+Risk evaluates simulated stakes and outcomes.
+
+Risk statuses:
+
+- ACCEPTABLE: drawdown at or below 10%
+- RESTRICTED: drawdown above 10%
+- BLOCKED: drawdown above 25%
+
+In the current LiveTickPipeline path, the risk input can be:
+
+- stakes: []
+- outcomes: []
+
+An empty simulation may produce an acceptable technical result, but that is not proof of trading performance.
+No real trade execution is enabled by this system.
+
+============================================================
+17. HTTP API AND WHAT EACH API MEANS
+============================================================
+
+Main file:
+- src/server.ts
+
+Health and readiness:
+
+GET /health
+- Confirms that the HTTP server is alive.
+- Does not prove Deriv data is connected.
+- Does not prove a signal is valid.
+
+GET /ready
+- Checks required database/Redis/provider readiness.
+- More meaningful than health for dependency readiness.
+
+Frontend:
+
+GET /
+- Serves public/trading-chart.html.
+
+Runtime/status:
+
+GET /api/v1/runtime
+- Provider status
+- Browser observation status
+- Agent status
+- Master-agent status
+- Signal engine status
+- Money-management status
+
+GET /api/v1/chart/diagnostics
+- Deriv diagnostics
+- Last agent consensus
+- Relay candle information
+- Chart data age
+
+GET /api/v1/providers
+- Provider health and provider identity.
+
+GET /api/v1/instruments
+- Registered/discovered Deriv instruments.
+
+GET /api/v1/agents
+- Registered agent metadata.
+
+GET /api/v1/models
+- Current result is NOT_AVAILABLE when no model registry instance is configured.
+
+Signal/history:
+
+GET /api/v1/signals/history
+- Database-backed history when configured.
+
+GET /api/v1/opportunities/top
+- Current behavior returns NO_QUALIFIED_SIGNAL.
+
+GET /api/v1/signals/performance
+- Current behavior returns NO_VALIDATED_HISTORY.
+
+GET /api/v1/simulation/performance
+- Explicitly simulation only.
+
+GET /api/v1/signals/output
+- Current behavior returns NO_SIGNAL when no qualified output exists.
+
+Quotex:
+
+GET /api/v1/quotex/status
+- Current provider status is NOT_VERIFIED / NOT_AVAILABLE / BLOCKED.
+- This does not prove live Quotex market data.
+
+Chart data:
+
+GET /api/v1/chart/:pair
+- Current behavior can return empty candles and NO_DATA depending on source/history state.
+
+Analysis:
+
+POST /api/v1/analysis
+- Runs the standalone orchestrator and signal engine for a supplied request.
+- If valid risk context is missing, risk defaults to BLOCKED.
+
+============================================================
+18. BROWSER OBSERVATION PATH
+============================================================
+
+Frontend/helper files:
+
+- public/js/browser-observation.js
+- public/js/quotex-ui.js
+
+Backend manager:
+- BrowserObservationManager in src/market/browser-observation.ts
+
+Observation routes include:
+
+- /api/v1/observation
+- /api/v1/observation/open
+- /api/v1/observation/start
+- /api/v1/observation/stop
+- /api/v1/observation/close
+- /api/v1/observation/pairs
+- /api/v1/observation/event
+- /api/v1/observation/tick
+
+Current browser observation behavior:
+
+- Opens an official provider page with window.open().
+- Records observation session state.
+- Polls observation state.
+- Renders observation status and behavior panels.
+
+It does not currently:
+
+- attach to the opened browser page DOM
+- read the page DOM automatically
+- receive broker websocket frames
+- inject a content script
+- discover real broker pairs automatically
+- send real broker OHLC/tick events automatically
+
+Manual login confirmation is not proof of backend authentication or real broker data ingestion.
+
+============================================================
+19. QUOTEX / MARKET-QX STATUS
+============================================================
+
+Verified project report:
+- docs/QUOTEX_MARKET_QX_RUNTIME_DATA_VERIFICATION.md
+
+The report states:
+
+- no proof of live Quotex/Market-QX market-data ingestion
+- no verified real Quotex pair data
+- no verified real Quotex tick data
+- no verified real Quotex candle data
+- pair selection from Quotex is blocked
+- Quotex candle tracking is blocked
+- Deriv data must not be relabeled as Quotex data
+
+The Quotex UI module is an observability/truthfulness surface.
+It can show NOT_VERIFIED or BLOCKED instead of inventing data.
+
+Current safe interpretation:
+
+- The project can use Deriv/reference data for chart display.
+- The project can display a Quotex-inspired UI.
+- The project cannot claim that the displayed Deriv candles are Quotex candles.
+- A CALL or PUT should not be shown as a validated live broker signal without a verified source and completed gates.
+
+============================================================
+20. FRONTEND RENDERING
+============================================================
+
+Main frontend:
+- public/trading-chart.html
+
+The frontend:
+
+1. Creates a canvas-based chart.
+2. Connects to ws://127.0.0.1:8080.
+3. Receives candle JSON messages.
+4. Maintains candles by pair/timeframe in browser memory.
+5. Draws OHLC candles on a canvas.
+6. Supports zoom.
+7. Supports pan.
+8. Supports follow-latest mode.
+9. Supports crosshair.
+10. Supports fullscreen.
+11. Supports technical indicator controls.
+12. Polls runtime and diagnostics APIs.
+13. Displays master signal state.
+
+Chart interaction state includes:
+
+- selected pair
+- timeframe
+- candle map
+- pair status map
+- last tick map
+- selected indicators
+- crosshair state
+- websocket state
+- follow-latest state
+- view span
+- current view end
+
+The browser relay chart displays Deriv/reference-market candles.
+It does not display verified Quotex candles unless a separate legitimate source supplies them.
+
+Current UI structure:
+
+- persistent compact left rail
+- terminal header
+- pair tracking strip
+- live chart workspace
+- right system observability panel
+- selectable system cards
+- live/waiting/error status colors
+
+The UI layer does not change provider truth.
+
+============================================================
+21. PYTHON AUXILIARY COMPONENTS
+============================================================
+
+These files are auxiliary or legacy paths:
+
+backend/deriv_forwarder.py
+- explicitly disabled legacy bridge
+- prints active-provider status
+- does not replace the TypeScript live provider bridge
+
+backend/forex_ws_streamer.py
+- connects to Finnhub, not Deriv
+- aggregates Finnhub trades into one-second candles
+- attempts to send data to ws://127.0.0.1:8080
+
+backend/rolling_ohlc_listener.py
+- listens to the local relay
+- displays one-minute candles
+- marks screen-capture-style data as UNVERIFIED_SCREEN_CAPTURE
+
+backend/screen_live_ws_client.py
+- captures screenshots
+- uses OCR to read prices
+- creates one-second and one-minute candles
+- labels them UNVERIFIED_SCREEN_CAPTURE
+- attempts to send them to the local websocket endpoint
+
+Important:
+The TypeScript DashboardRelay is primarily a server-to-browser broadcaster.
+It is not equivalent to a general-purpose incoming websocket ingestion server for arbitrary Python senders.
+
+============================================================
+22. COMPLETE SIGNAL JOURNEY
+============================================================
+
+The intended complete journey is:
+
+1. Application starts.
+2. Configuration is loaded.
+3. Deriv provider connection is attempted.
+4. A provider tick arrives.
+5. Symbol, price, and timestamp are normalized.
+6. Diagnostics are updated.
+7. Tick is published to the dashboard relay.
+8. Tick is grouped into a one-minute candle.
+9. Browser receives the candle over local websocket.
+10. Browser draws the candle.
+11. In the complete analytical pipeline, tick/candle quality is evaluated.
+12. Behavior detectors search for evidence.
+13. Feature engine calculates market features.
+14. Eligible agents analyze the feature set.
+15. Orchestrator calculates votes, agreement, probability, and failures.
+16. Validation gates check historical/out-of-sample requirements.
+17. Risk engine checks simulated risk.
+18. Signal engine decides whether a signal is qualified.
+19. Only a fully qualified result could become CALL or PUT.
+20. The UI displays the result and provenance.
+
+Current real path:
+
+Deriv tick
+  -> LiveProviderBridge / Deriv universe subscription
+  -> DashboardRelay
+  -> one-minute chart candle
+  -> browser canvas
+  -> diagnostics UI
+  -> master state normally NO_SIGNAL
+
+Current missing connection:
+
+LiveProviderBridge
+  -X-> LiveTickPipeline
+  -X-> FeatureEngine
+  -X-> AgentOrchestrator.analyze()
+  -X-> ValidationEngine gate
+  -X-> RiskEngine decision
+  -X-> fully model-backed live CALL/PUT
+
+Therefore the current UI can truthfully show:
+
+- provider connected or disconnected
+- live/reference candle stream status
+- chart candles
+- agent registration count
+- system health
+- data quality state
+- NO_SIGNAL when validation is unavailable
+
+It should not truthfully show:
+
+- verified Quotex candle data
+- guaranteed CALL/PUT predictions
+- real trade execution
+- validated profit performance without validated history
+
+============================================================
+23. HOW TO READ THE UI
+============================================================
+
+Top system status:
+
+- SYSTEM: overall application state
+- MARKET DATA: provider/data state
+- AGENTS: registered and active agent counts
+- LAST UPDATE: most recent dashboard update
+
+Pair tabs:
+
+- Pair name identifies the instrument.
+- Price is the most recent chart value available.
+- Green status means the pair has recent live relay activity.
+- Amber status means waiting/degraded/stale information.
+- Gray status means no recent tick.
+
+Chart status bar:
+
+- SOURCE identifies the data provider.
+- CONNECTION identifies websocket/provider state.
+- STREAM identifies whether recent data is being received.
+- LAST TICK identifies tick age.
+- CANDLE identifies timeframe and candle readiness.
+- QUALITY identifies freshness/validation state.
+
+Right system panel:
+
+- MARKET DATA shows provider and connection truth.
+- DATA QUALITY shows freshness and integrity.
+- CANDLE ENGINE shows current pair/timeframe/candle.
+- AI / AGENTS shows registration and active counts.
+- MASTER SIGNAL shows direction, reason, and qualification state.
+- SYSTEM HEALTH shows API, websocket, candle, and signal engine state.
+
+A green UI color is not proof of a qualified trading signal.
+The actual direction, reason, validation, and provenance fields must also be checked.
+
+============================================================
+24. CURRENT VERIFIED BOTTOM LINE
+============================================================
+
+The project currently has:
+
+- a TypeScript HTTP backend
+- a local websocket dashboard relay
+- Deriv live/reference market ingestion paths
+- one-minute chart candle aggregation
+- canvas chart rendering
+- agent registry and orchestration code
+- signal, validation, and risk modules
+- browser observation contracts
+- a truthful Quotex status module
+- a Quotex-inspired frontend layout
+
+The project currently does not have a verified end-to-end live Quotex signal path.
+The main live Deriv bridge is primarily feeding chart/diagnostics and explicitly keeps master signal at NO_SIGNAL until validated analysis is connected.
+
+This is why the safest current displayed signal is:
+
+NO_SIGNAL
+
+with reasons such as:
+
+- INSUFFICIENT_EVIDENCE
+- WAITING_FOR_VALIDATED_DERIV_DATA
+- NOT_VALIDATED
+- UNKNOWN_REGIME
+- MODEL_DEGRADED
+- CALIBRATION_FAILED
+
+End of document.
